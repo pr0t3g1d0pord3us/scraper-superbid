@@ -41,7 +41,7 @@ class SuperbidScraper:
             # ========== ARTES E COLECIONISMO ==========
             ('artes-decoracao-colecionismo', 'artes_colecionismo', 'Artes e Colecionismo', {}),
             
-            # ========== BENS DE CONSUMO (7 tipos) - REMOVIDO LAZER E ESPORTES ==========
+            # ========== BENS DE CONSUMO (7 tipos) ==========
             ('bolsas-canetas-joias-e-relogios/acessorios', 'bens_consumo', 'Acessórios', {'consumption_goods_type': 'acessorios'}),
             ('bolsas-canetas-joias-e-relogios/bolsas', 'bens_consumo', 'Bolsas', {'consumption_goods_type': 'bolsas'}),
             ('bolsas-canetas-joias-e-relogios/canetas', 'bens_consumo', 'Canetas', {'consumption_goods_type': 'canetas'}),
@@ -73,7 +73,7 @@ class SuperbidScraper:
             ('embarcacoes-aeronaves/pecas-e-acessorios', 'partes_pecas', 'Peças Embarcações/Aeronaves', {'parts_type': 'embarcacoes_aeronaves'}),
             ('partes-e-pecas', 'partes_pecas', 'Peças Variadas', {'parts_type': 'variados'}),
             
-            # ========== NICHADOS (5 tipos) - ADICIONADO LAZER E ESPORTES ==========
+            # ========== NICHADOS (5 tipos) ==========
             ('cozinhas-e-restaurantes/restaurantes', 'nichados', 'Restaurantes', {'specialized_type': 'restaurante'}),
             ('cozinhas-e-restaurantes/cozinhas-industriais', 'nichados', 'Cozinhas Industriais', {'specialized_type': 'cozinha_industrial'}),
             ('oportunidades/negocios', 'nichados', 'Negócios', {'specialized_type': 'negocios'}),
@@ -296,19 +296,56 @@ class SuperbidScraper:
             value = detail.get("currentMinBid") or detail.get("initialBidValue")
             value_text = detail.get("currentMinBidFormatted") or detail.get("initialBidValueFormatted")
             
-            # Localização
+            # ✅ Localização - tenta de 3 fontes (prioridade: product.location > seller.city)
             city = None
             state = None
-            seller_city = seller.get("city", "") or ""
             
-            if '/' in seller_city:
-                parts = seller_city.split('/')
-                city = parts[0].strip()
-                state = parts[1].strip() if len(parts) > 1 else None
-            elif ' - ' in seller_city:
-                parts = seller_city.split(' - ')
-                city = parts[0].strip()
-                state = parts[1].strip() if len(parts) > 1 else None
+            # 1) Tenta pegar do product.location (mais confiável)
+            location = product.get("location", {})
+            location_city = location.get("city", "")
+            
+            if location_city:
+                # Formato: "Ipatinga - MG" ou "Ipatinga/MG"
+                if ' - ' in location_city:
+                    parts = location_city.split(' - ')
+                    city = parts[0].strip()
+                    state = parts[1].strip() if len(parts) > 1 else None
+                elif '/' in location_city:
+                    parts = location_city.split('/')
+                    city = parts[0].strip()
+                    state = parts[1].strip() if len(parts) > 1 else None
+                else:
+                    city = location_city.strip()
+            
+            # 2) Fallback: seller.city
+            if not city:
+                seller_city = seller.get("city", "") or ""
+                if seller_city:
+                    if '/' in seller_city:
+                        parts = seller_city.split('/')
+                        city = parts[0].strip()
+                        state = parts[1].strip() if len(parts) > 1 else None
+                    elif ' - ' in seller_city:
+                        parts = seller_city.split(' - ')
+                        city = parts[0].strip()
+                        state = parts[1].strip() if len(parts) > 1 else None
+                    else:
+                        city = seller_city.strip()
+            
+            # 3) Se não tem state ainda, tenta pegar de location.state e converte nome completo para sigla
+            if not state and location.get("state"):
+                state_full = location.get("state", "")
+                # Mapeia nome completo para sigla
+                state_map = {
+                    'Acre': 'AC', 'Alagoas': 'AL', 'Amapá': 'AP', 'Amazonas': 'AM',
+                    'Bahia': 'BA', 'Ceará': 'CE', 'Distrito Federal': 'DF', 'Espírito Santo': 'ES',
+                    'Goiás': 'GO', 'Maranhão': 'MA', 'Mato Grosso': 'MT', 'Mato Grosso do Sul': 'MS',
+                    'Minas Gerais': 'MG', 'Pará': 'PA', 'Paraíba': 'PB', 'Paraná': 'PR',
+                    'Pernambuco': 'PE', 'Piauí': 'PI', 'Rio de Janeiro': 'RJ', 'Rio Grande do Norte': 'RN',
+                    'Rio Grande do Sul': 'RS', 'Rondônia': 'RO', 'Roraima': 'RR', 'Santa Catarina': 'SC',
+                    'São Paulo': 'SP', 'Sergipe': 'SE', 'Tocantins': 'TO'
+                }
+                state = state_map.get(state_full, state_full)
             
             # Link
             link = f"https://exchange.superbid.net/oferta/{offer_id}"
@@ -334,7 +371,7 @@ class SuperbidScraper:
                 'city': city,
                 'state': state,
                 'link': link,
-                'target_table': table,  # ✅ Tabela de destino já definida
+                'target_table': table,
                 
                 'auction_date': auction_date,
                 'auction_type': auction.get("modalityDesc"),
@@ -392,7 +429,7 @@ def main():
     total_items = sum(len(items) for items in items_by_table.values())
     
     print(f"\n✅ Total coletado: {total_items} itens")
-    print(f"📄 Duplicatas filtradas: {scraper.stats['duplicates']}")
+    print(f"🔄 Duplicatas filtradas: {scraper.stats['duplicates']}")
     
     if not total_items:
         print("⚠️ Nenhum item coletado - encerrando")
