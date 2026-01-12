@@ -13,6 +13,7 @@ import random
 import requests
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 from typing import List, Optional
 
@@ -356,9 +357,12 @@ class SuperbidScraper:
             if end_date_str:
                 try:
                     # Formato ISO: "2025-01-15T15:00:00Z"
+                    # Converte para datetime UTC
                     dt = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
-                    # Formata como: "2025-01-15 13:00:00+00"
-                    auction_date = dt.strftime('%Y-%m-%d %H:%M:%S+00')
+                    # Converte para timezone de São Paulo
+                    dt_sp = dt.astimezone(ZoneInfo('America/Sao_Paulo'))
+                    # Retorna ISO format completo
+                    auction_date = dt_sp.isoformat()
                 except:
                     pass
             
