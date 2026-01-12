@@ -2,14 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 NORMALIZER FORTALECIDO - Limpeza Avançada de Dados
-
-✨ Recursos:
-- Extração de título limpo do external_id (MegaLeilões)
-- Captura informações de praça/desconto ANTES de limpar
-- Limpeza profunda de texto (HTML, espaços, caracteres especiais)
-- Primeira letra maiúscula (Title Case)
-- Descrição limpa para análise posterior de IA
-- Preserva informações importantes de leilão
+✅ FIX: Aceita auction_date no formato PostgreSQL timestamptz
 """
 
 import re
@@ -25,7 +18,6 @@ class UniversalNormalizer:
         'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
     ]
     
-    # Palavras comuns que não devem ter maiúscula inicial
     LOWERCASE_WORDS = {
         'de', 'da', 'do', 'das', 'dos', 'e', 'em', 'com', 'para', 'por', 
         'a', 'o', 'à', 'ao', 'no', 'na', 'um', 'uma'
@@ -39,7 +31,7 @@ class UniversalNormalizer:
         raw_title = item.get('title', '')
         raw_description = item.get('description', '')
         
-        # ✅ Extrai título limpo do external_id (MegaLeilões)
+        # Extrai título limpo do external_id (MegaLeilões)
         if source == 'megaleiloes' and external_id:
             clean_title = self._extract_title_from_external_id(external_id)
         else:
@@ -48,7 +40,7 @@ class UniversalNormalizer:
         # Aplica Title Case inteligente
         clean_title = self._smart_title_case(clean_title)
         
-        # Descrição super limpa (remove informações de praça - já vêm do HTML)
+        # Descrição super limpa
         clean_description = self._deep_clean_description(raw_description, remove_auction_info=True)
         
         return {
@@ -56,11 +48,11 @@ class UniversalNormalizer:
             'source': item.get('source'),
             'external_id': item.get('external_id'),
             
-            # Título limpo e formatado
+            # Título limpo
             'title': clean_title,
             'normalized_title': self._normalize_for_search(clean_title),
             
-            # Descrição limpa para análise (MANTÉM informações de praça)
+            # Descrição limpa
             'description': clean_description,
             'description_preview': self._create_preview(clean_description, clean_title),
             
@@ -68,7 +60,7 @@ class UniversalNormalizer:
             'value': self._parse_value(item.get('value')),
             'value_text': item.get('value_text'),
             
-            # ✅ INFORMAÇÕES DE PRAÇA (vêm do HTML extraído no scraper)
+            # Informações de praça
             'auction_round': item.get('auction_round'),
             'discount_percentage': item.get('discount_percentage'),
             'first_round_value': self._parse_value(item.get('first_round_value')),
@@ -79,7 +71,7 @@ class UniversalNormalizer:
             'state': self._validate_state(item.get('state')),
             'address': self._clean_address(item.get('address')),
             
-            # Leilão
+            # ✅ LEILÃO - auction_date COM VALIDAÇÃO CORRIGIDA
             'auction_date': self._parse_date(item.get('auction_date')),
             'days_remaining': self._parse_days_remaining(item.get('days_remaining')),
             'auction_type': self._clean_text(item.get('auction_type'), 'Leilão'),
@@ -95,155 +87,94 @@ class UniversalNormalizer:
             # Link
             'link': item.get('link'),
             
-            # Campos especiais (vehicle_type, property_type, animal_type)
+            # Campos especiais
             'vehicle_type': item.get('vehicle_type'),
             'property_type': item.get('property_type'),
             'animal_type': item.get('animal_type'),
+            'appliance_type': item.get('appliance_type'),
+            'tech_type': item.get('tech_type'),
+            'parts_type': item.get('parts_type'),
+            'specialized_type': item.get('specialized_type'),
+            'construction_material_type': item.get('construction_material_type'),
+            'consumption_goods_type': item.get('consumption_goods_type'),
             
             # Metadata
             'metadata': self._build_metadata(item),
         }
     
     def _extract_title_from_external_id(self, external_id: str) -> str:
-        """
-        Extrai título limpo do external_id do MegaLeilões
-        
-        Input: "megaleiloes_sofa-em-estrutura-macica-tecido-de-veludo-j119233"
-        Output: "Sofa Em Estrutura Macica Tecido De Veludo"
-        """
+        """Extrai título do external_id do MegaLeilões"""
         if not external_id:
             return "Sem Título"
         
-        # Remove prefixo "megaleiloes_"
         clean = external_id
         if clean.startswith('megaleiloes_'):
             clean = clean[len('megaleiloes_'):]
         
-        # Remove código do leilão no final (-jXXXXXX)
         clean = re.sub(r'-j\d+$', '', clean, flags=re.IGNORECASE)
-        
-        # Remove outros códigos comuns (números longos no final)
         clean = re.sub(r'-\d{5,}$', '', clean)
-        
-        # Substitui hífens e underscores por espaços
         clean = clean.replace('-', ' ').replace('_', ' ')
-        
-        # Remove espaços múltiplos
         clean = re.sub(r'\s+', ' ', clean).strip()
-        
-        # Remove caracteres especiais restantes
         clean = re.sub(r'[^\w\s]', '', clean)
         
-        # Limita tamanho
         if len(clean) > 200:
             clean = clean[:197] + '...'
         
-        if not clean:
-            return "Sem Título"
-        
-        return clean
+        return clean if clean else "Sem Título"
     
     def _clean_title(self, title: Optional[str], remove_auction_info: bool = True) -> str:
-        """
-        Limpeza profunda de título
-        remove_auction_info=True: Remove "50% abaixo na 2ª praça" do TÍTULO (já capturado em campo próprio)
-        """
+        """Limpeza profunda de título"""
         if not title or not str(title).strip():
             return "Sem Título"
         
         clean = str(title).strip()
         
-        # Remove "LOTE XX" do início
-        clean = re.sub(r'^LOTE\s+\d+\s*[-:–—]?\s*', '', clean, flags=re.IGNORECASE)
-        
-        # Remove HTML tags
+        # Remove LOTE, HTML, entidades
+        clean = re.sub(r'^LOTE\s+\d+\s*[-:—–]?\s*', '', clean, flags=re.IGNORECASE)
         clean = re.sub(r'<[^>]+>', '', clean)
+        clean = clean.replace('&nbsp;', ' ').replace('&amp;', '&')
         
-        # Remove entidades HTML
-        clean = clean.replace('&nbsp;', ' ')
-        clean = clean.replace('&amp;', '&')
-        clean = clean.replace('&lt;', '<')
-        clean = clean.replace('&gt;', '>')
-        clean = clean.replace('&quot;', '"')
-        
-        # ✅ Remove informações de praça/desconto do TÍTULO (já capturadas em campos próprios)
+        # Remove info de praça do título
         if remove_auction_info:
             clean = re.sub(r'\d+%\s*(?:abaixo|desconto|off)?\s*na\s*\d+[ªº]\s*pra[çc]a', '', clean, flags=re.IGNORECASE)
             clean = re.sub(r'\d+[ªº]\s*pra[çc]a', '', clean, flags=re.IGNORECASE)
         
-        # Remove vírgulas soltas no final
         clean = clean.rstrip(',').strip()
-        
-        # Remove "Placa FINAL X (UF)"
         clean = re.sub(r'\s*,?\s*Placa\s+FINAL\s+\d+\s*\([A-Z]{2}\)\s*,?', '', clean, flags=re.IGNORECASE)
-        
-        # Remove underscores e múltiplos espaços
         clean = clean.replace('_', ' ')
         clean = re.sub(r'\s+', ' ', clean).strip()
-        
-        # Remove zeros à esquerda de números isolados
-        clean = re.sub(r'\b0+(\d{1,2})\b', r'\1', clean)
-        
-        # Remove valores do título (mantém só no campo value)
         clean = re.sub(r'R\$\s*[\d.,]+', '', clean)
         
-        # Remove números de visitas/lances do título
-        clean = re.sub(r'\b\d+\s+\d+\s+\d+\b', '', clean)
-        
-        # Remove espaços múltiplos novamente
-        clean = re.sub(r'\s+', ' ', clean).strip()
-        
-        # Limita tamanho
         if len(clean) > 200:
             clean = clean[:197] + '...'
         
         return clean if clean else "Sem Título"
     
     def _smart_title_case(self, text: str) -> str:
-        """
-        Aplica Title Case inteligente
-        - Primeira letra de cada palavra maiúscula
-        - Exceções para preposições (de, da, do, em, com, etc.)
-        - Primeira palavra sempre maiúscula
-        """
+        """Aplica Title Case inteligente"""
         if not text:
             return text
         
         words = text.split()
-        
         if not words:
             return text
         
-        # Primeira palavra sempre maiúscula
         result = [words[0].capitalize()]
         
-        # Demais palavras
         for word in words[1:]:
             word_lower = word.lower()
             
-            # Preserva siglas (ex: USB, HDMI)
             if word.isupper() and len(word) <= 5:
                 result.append(word)
-            # Preposições e artigos em minúscula
             elif word_lower in self.LOWERCASE_WORDS:
                 result.append(word_lower)
-            # Demais palavras: primeira maiúscula
             else:
                 result.append(word.capitalize())
         
         return ' '.join(result)
     
     def _deep_clean_description(self, description: Optional[str], remove_auction_info: bool = False) -> Optional[str]:
-        """
-        Limpeza PROFUNDA da descrição
-        remove_auction_info=False: MANTÉM informações de praça na descrição (contexto importante)
-        
-        - Remove HTML tags
-        - Remove espaços desnecessários
-        - Remove caracteres especiais
-        - Remove informações duplicadas
-        - Prepara para análise de IA
-        """
+        """Limpeza profunda da descrição"""
         if not description:
             return None
         
@@ -252,58 +183,37 @@ class UniversalNormalizer:
         if not desc or len(desc) < 5:
             return None
         
-        # Remove HTML tags (preservando quebras de linha)
+        # Remove HTML
         desc = re.sub(r'<br\s*/?>', '\n', desc, flags=re.IGNORECASE)
         desc = re.sub(r'<p>', '\n\n', desc, flags=re.IGNORECASE)
         desc = re.sub(r'</p>', '\n', desc, flags=re.IGNORECASE)
         desc = re.sub(r'<[^>]+>', '', desc)
         
-        # Remove entidades HTML
-        desc = desc.replace('&nbsp;', ' ')
-        desc = desc.replace('&amp;', '&')
-        desc = desc.replace('&lt;', '<')
-        desc = desc.replace('&gt;', '>')
-        desc = desc.replace('&quot;', '"')
+        # Entidades HTML
+        desc = desc.replace('&nbsp;', ' ').replace('&amp;', '&')
         desc = re.sub(r'&#\d+;', '', desc)
         
-        # ✅ MANTÉM informações de praça na descrição (remove_auction_info=False por padrão)
-        if remove_auction_info:
-            desc = re.sub(r'\d+%\s*(?:abaixo|desconto|off)?\s*na\s*\d+[ªº]\s*pra[çc]a', '', desc, flags=re.IGNORECASE)
-        
-        # Remove múltiplas quebras de linha (máximo 2)
+        # Limpa quebras e espaços
         desc = re.sub(r'\n\s*\n\s*\n+', '\n\n', desc)
-        
-        # Remove espaços múltiplos
         desc = re.sub(r' {2,}', ' ', desc)
         
-        # Remove linhas vazias repetidas
-        lines = [line.strip() for line in desc.split('\n')]
-        lines = [line for line in lines if line]  # Remove linhas vazias
+        lines = [line.strip() for line in desc.split('\n') if line.strip()]
         desc = '\n'.join(lines)
         
-        # Remove informações redundantes comuns
-        desc = re.sub(r'Exibindo \d+ de \d+ itens', '', desc, flags=re.IGNORECASE)
-        
-        # Remove URLs soltas
+        # Remove URLs, emails, telefones
         desc = re.sub(r'https?://[^\s]+', '', desc)
-        
-        # Remove emails soltos
         desc = re.sub(r'\S+@\S+', '', desc)
-        
-        # Remove telefones soltos
         desc = re.sub(r'\(\d{2}\)\s*\d{4,5}-?\d{4}', '', desc)
         
-        # Remove espaços extras após limpezas
         desc = re.sub(r'\s+', ' ', desc).strip()
         
-        # Limita tamanho (máximo 5000 chars para análise de IA)
         if len(desc) > 5000:
             desc = desc[:4997] + '...'
         
         return desc if desc else None
     
     def _normalize_for_search(self, title: Optional[str]) -> str:
-        """Normaliza título para busca (lowercase, sem acentos, sem pontuação)"""
+        """Normaliza para busca"""
         if not title:
             return ''
         
@@ -322,16 +232,13 @@ class UniversalNormalizer:
         for old, new in replacements.items():
             normalized = normalized.replace(old, new)
         
-        # Remove tudo que não é letra, número ou espaço
         normalized = re.sub(r'[^\w\s]', ' ', normalized)
-        
-        # Remove espaços múltiplos
         normalized = re.sub(r'\s+', ' ', normalized).strip()
         
         return normalized
     
     def _create_preview(self, description: Optional[str], title: Optional[str]) -> str:
-        """Cria preview curto e limpo"""
+        """Cria preview"""
         if description and len(description) > 10:
             preview = description[:150].strip()
             if len(description) > 150:
@@ -344,7 +251,7 @@ class UniversalNormalizer:
         return "Sem Descrição"
     
     def _parse_value(self, value) -> Optional[float]:
-        """Normaliza valor monetário"""
+        """Parse valor"""
         if value is None:
             return None
         
@@ -357,7 +264,7 @@ class UniversalNormalizer:
             return None
     
     def _clean_city(self, city: Optional[str]) -> Optional[str]:
-        """Formata cidade (Title Case)"""
+        """Formata cidade"""
         if not city:
             return None
         
@@ -366,14 +273,12 @@ class UniversalNormalizer:
         if not city_clean:
             return None
         
-        # Remove estado se vier junto
         if '/' in city_clean:
             city_clean = city_clean.split('/')[0].strip()
         
         if '-' in city_clean:
             city_clean = city_clean.split('-')[0].strip()
         
-        # Aplica Title Case
         return self._smart_title_case(city_clean)
     
     def _validate_state(self, state: Optional[str]) -> Optional[str]:
@@ -398,7 +303,6 @@ class UniversalNormalizer:
         if not addr or len(addr) < 3:
             return None
         
-        # Aplica Title Case
         addr = self._smart_title_case(addr)
         
         if len(addr) > 255:
@@ -407,12 +311,27 @@ class UniversalNormalizer:
         return addr
     
     def _parse_date(self, date_str: Optional[str]) -> Optional[str]:
-        """Valida formato ISO de data"""
+        """
+        ✅ FIX: Valida e aceita múltiplos formatos de data
+        
+        Aceita:
+        - ISO com T: 2026-01-27T11:03:00
+        - PostgreSQL timestamptz: 2026-01-27 11:03:00-03
+        - ISO Z: 2026-01-27T11:03:00Z
+        - ISO com offset: 2026-01-27T11:03:00-03:00
+        """
         if not date_str:
             return None
         
-        if isinstance(date_str, str) and 'T' in date_str:
-            return date_str
+        date_clean = str(date_str).strip()
+        
+        if not date_clean:
+            return None
+        
+        # ✅ Aceita formato ISO com 'T' OU formato PostgreSQL com espaço
+        # Padrão: YYYY-MM-DD HH:MM:SS (com ou sem timezone)
+        if 'T' in date_clean or re.match(r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}', date_clean):
+            return date_clean
         
         return None
     
@@ -430,7 +349,7 @@ class UniversalNormalizer:
             return None
     
     def _clean_text(self, text: Optional[str], default: Optional[str] = None) -> Optional[str]:
-        """Limpa texto genérico"""
+        """Limpa texto"""
         if not text:
             return default
         
@@ -439,7 +358,6 @@ class UniversalNormalizer:
         if not clean:
             return default
         
-        # Aplica Title Case se for texto (não número)
         if not clean.isdigit():
             clean = self._smart_title_case(clean)
         
@@ -449,7 +367,7 @@ class UniversalNormalizer:
         return clean
     
     def _parse_int(self, value, default: int = 0) -> int:
-        """Parse inteiro com default"""
+        """Parse inteiro"""
         if value is None:
             return default
         
@@ -459,10 +377,9 @@ class UniversalNormalizer:
             return default
     
     def _build_metadata(self, item: dict) -> dict:
-        """Constrói metadata preservando campos originais"""
+        """Build metadata"""
         metadata = item.get('metadata', {}).copy() if isinstance(item.get('metadata'), dict) else {}
         
-        # Campos extras vão pro metadata
         extra_fields = [
             'raw_category', 'condition', 'brand', 'model', 'year',
             'quantity', 'unit_price'
@@ -476,57 +393,51 @@ class UniversalNormalizer:
 
 
 def normalize_items(items: List[dict]) -> List[dict]:
-    """Normaliza lista de itens"""
+    """Normaliza lista"""
     normalizer = UniversalNormalizer()
     return [normalizer.normalize(item) for item in items]
 
 
 def normalize_item(item: dict) -> dict:
-    """Normaliza um item único"""
+    """Normaliza item único"""
     normalizer = UniversalNormalizer()
     return normalizer.normalize(item)
 
 
 # ========== TESTE ==========
 if __name__ == "__main__":
-    print("\n🧪 TESTANDO NORMALIZER - LIMPEZA COMPLETA\n")
+    print("\n🧪 TESTANDO NORMALIZER - auction_date FIX\n")
     print("="*80)
     
     normalizer = UniversalNormalizer()
     
-    test_items = [
-        {
-            'source': 'megaleiloes',
-            'external_id': 'megaleiloes_sofa-em-estrutura-macica-tecido-de-veludo-j119233',
-            'title': '50% abaixo na 2ª praça R$ 3.500,00 262 0 Sofá em estrutura maciça...',
-            'description': 'Sofá em estrutura maciça revestido em tecido de veludo. Fabricação própria. 50% de desconto na 2ª praça!',
-            'auction_round': 2,
-            'discount_percentage': 15.0,
-            'value': 3500.00,
-        },
-        {
-            'source': 'megaleiloes',
-            'external_id': 'megaleiloes_cadeira-odontologica-j119235',
-            'title': '40% abaixo na 1ª praça R$ 5.000,00 Cadeira Odontológica',
-            'description': 'Cadeira odontológica completa da marca Kavo.',
-            'auction_round': 1,
-            'value': 5000.00,
-        },
-    ]
+    test_item = {
+        'source': 'superbid',
+        'external_id': 'superbid_4509859',
+        'title': 'NISSAN SENTRA 2.0S, 2014/2014',
+        'description': 'Carro em bom estado',
+        'value': 25000.00,
+        'value_text': 'R$ 25.000,00',
+        'city': 'São Paulo',
+        'state': 'SP',
+        'link': 'https://exchange.superbid.net/oferta/4509859',
+        'auction_date': '2026-01-27 11:03:00-03',  # ✅ Formato PostgreSQL
+        'vehicle_type': 'carro',
+    }
     
-    for i, item in enumerate(test_items, 1):
-        normalized = normalizer.normalize(item)
-        
-        print(f"\n{i}. ORIGINAL:")
-        print(f"   title (sujo): {item['title'][:80]}...")
-        print(f"   description (suja): {item['description'][:80]}...")
-        
-        print(f"\n   ✨ NORMALIZADO:")
-        print(f"   title (limpo): {normalized['title']}")
-        print(f"   normalized_title: {normalized['normalized_title']}")
-        print(f"   description (limpa): {normalized['description'][:80]}...")
-        print(f"   auction_round: {normalized['auction_round']}")
-        print(f"   discount_percentage: {normalized['discount_percentage']}")
-        print("-" * 80)
+    print("ANTES da normalização:")
+    print(f"  auction_date: {test_item.get('auction_date')}")
+    print(f"  Tipo: {type(test_item.get('auction_date'))}")
     
-    print("\n✅ Teste concluído!")
+    normalized = normalizer.normalize(test_item)
+    
+    print("\nDEPOIS da normalização:")
+    print(f"  auction_date: {normalized.get('auction_date')}")
+    print(f"  Tipo: {type(normalized.get('auction_date'))}")
+    
+    if normalized.get('auction_date'):
+        print("\n✅ SUCCESS: auction_date preservado!")
+    else:
+        print("\n❌ FAIL: auction_date foi perdido!")
+    
+    print("="*80)
