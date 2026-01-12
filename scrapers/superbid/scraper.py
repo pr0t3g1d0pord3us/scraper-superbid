@@ -13,7 +13,6 @@ import random
 import requests
 from pathlib import Path
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from collections import defaultdict
 from typing import List, Optional
 
@@ -351,18 +350,16 @@ class SuperbidScraper:
             # Link
             link = f"https://exchange.superbid.net/oferta/{offer_id}"
             
-            # Data do leilão
+            # ✅ Data do leilão - FORMATO CORRETO
             auction_date = None
             end_date_str = offer.get("endDate")
             if end_date_str:
                 try:
-                    # Formato ISO: "2025-01-15T15:00:00Z"
-                    # Converte para datetime UTC
-                    dt = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
-                    # Converte para timezone de São Paulo
-                    dt_sp = dt.astimezone(ZoneInfo('America/Sao_Paulo'))
-                    # Retorna ISO format completo
-                    auction_date = dt_sp.isoformat()
+                    # Formato que vem da API: "2026-01-27 11:02:00" (SEM timezone)
+                    # Assume que é horário de Brasília e adiciona offset -03:00
+                    dt = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S')
+                    # Formata no padrão PostgreSQL timestamptz
+                    auction_date = dt.strftime('%Y-%m-%d %H:%M:%S-03')
                 except:
                     pass
             
