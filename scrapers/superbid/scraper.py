@@ -356,7 +356,9 @@ class SuperbidScraper:
             if end_date_str:
                 try:
                     # Formato ISO: "2025-01-15T15:00:00Z"
-                    auction_date = end_date_str.replace('Z', ' ').replace('T', ' ').strip()
+                    dt = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+                    # Formata como: "2025-01-15 13:00:00+00"
+                    auction_date = dt.strftime('%Y-%m-%d %H:%M:%S+00')
                 except:
                     pass
             
