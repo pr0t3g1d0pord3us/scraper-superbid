@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPABASE CLIENT - Genérico para todas as tabelas
-Suporta campos especiais: vehicle_type, property_type, animal_type
+SUPABASE CLIENT - ATUALIZADO
+✅ Estrutura simplificada: has_bid (boolean) + auction_round
+❌ Removido: total_bids, total_bidders, total_visits, days_remaining
 """
 
 import os
@@ -12,7 +13,7 @@ from datetime import datetime
 
 
 class SupabaseClient:
-    """Cliente para Supabase - Schema auctions"""
+    """Cliente para Supabase - Schema auctions (simplificado)"""
     
     def __init__(self):
         self.url = os.getenv('SUPABASE_URL')
@@ -36,7 +37,7 @@ class SupabaseClient:
         self.session.headers.update(self.headers)
     
     def upsert(self, tabela: str, items: list) -> dict:
-        """Upsert com suporte a campos específicos por tabela"""
+        """Upsert com estrutura simplificada"""
         if not items:
             return {'inserted': 0, 'updated': 0, 'errors': 0}
         
@@ -53,7 +54,7 @@ class SupabaseClient:
             print("  ⚠️ Nenhum item válido para inserir")
             return {'inserted': 0, 'updated': 0, 'errors': 0}
         
-        # Normaliza chaves do batch (remove campos inválidos por tabela)
+        # Normaliza chaves do batch
         prepared = self._normalize_batch_keys(prepared, tabela)
         
         stats = {'inserted': 0, 'updated': 0, 'errors': 0}
@@ -90,22 +91,22 @@ class SupabaseClient:
         return stats
     
     def _normalize_batch_keys(self, items: list, tabela: str = '') -> list:
-        """Garante que todos os itens tenham apenas campos válidos para a tabela"""
+        """Garante que todos os itens tenham apenas campos válidos"""
         if not items:
             return items
         
-        # Campos padrão presentes em TODAS as tabelas
+        # ✅ CAMPOS PADRÃO - ESTRUTURA SIMPLIFICADA
         standard_fields = {
             'source', 'external_id', 'title', 'normalized_title', 'description_preview',
             'description', 'value', 'value_text', 'city', 'state', 'address',
-            'auction_date', 'days_remaining', 'auction_type', 'auction_name',
-            'store_name', 'lot_number', 'total_visits', 'total_bids', 'total_bidders',
+            'auction_date', 'auction_type', 'auction_name',
+            'store_name', 'lot_number', 
             'link', 'metadata', 'duplicate_group', 'is_primary_duplicate',
             'is_active', 'created_at', 'updated_at', 'last_scraped_at',
-            'market_price', 'market_price_source', 'market_price_updated_at',
-            'market_price_confidence', 'market_price_metadata',
-            # ✅ Novos campos de praça
-            'auction_round', 'discount_percentage', 'first_round_value', 'first_round_date'
+            
+            # ✅ SIMPLIFICADO
+            'has_bid',  # Boolean ao invés de contadores
+            'auction_round',  # NULL = 1ª praça, 2 = 2ª praça
         }
         
         # Campos específicos por tabela
@@ -121,19 +122,19 @@ class SupabaseClient:
             'materiais_construcao': {'construction_material_type'},
         }
         
-        # Campos permitidos para esta tabela
+        # Campos permitidos
         allowed_fields = standard_fields.copy()
         if tabela in table_specific_fields:
             allowed_fields.update(table_specific_fields[tabela])
         
-        # Coleta todas as chaves válidas do batch
+        # Coleta chaves válidas
         all_keys = set()
         for item in items:
             for key in item.keys():
                 if key in allowed_fields:
                     all_keys.add(key)
         
-        # Normaliza cada item para ter todas as chaves válidas
+        # Normaliza itens
         normalized = []
         for item in items:
             normalized_item = {}
@@ -179,11 +180,35 @@ class SupabaseClient:
             except:
                 value = None
         
+        # ✅ HAS_BID - Converte para boolean
+        has_bid = item.get('has_bid')
+        if has_bid is not None:
+            if isinstance(has_bid, bool):
+                has_bid = has_bid
+            elif isinstance(has_bid, (int, float)):
+                has_bid = has_bid > 0
+            elif isinstance(has_bid, str):
+                has_bid = has_bid.lower() in ('true', '1', 'yes', 'sim')
+            else:
+                has_bid = False
+        else:
+            has_bid = False
+        
+        # ✅ AUCTION_ROUND - NULL ou 2
+        auction_round = item.get('auction_round')
+        if auction_round is not None:
+            try:
+                auction_round = int(auction_round)
+                # Aceita apenas 2 (segunda praça)
+                auction_round = 2 if auction_round == 2 else None
+            except:
+                auction_round = None
+        
         metadata = item.get('metadata', {})
         if not isinstance(metadata, dict):
             metadata = {}
         
-        # ✅ Campos padrão (presentes em TODAS as tabelas)
+        # ✅ CAMPOS PADRÃO - ESTRUTURA SIMPLIFICADA
         data = {
             'source': str(source),
             'external_id': str(external_id),
@@ -197,28 +222,22 @@ class SupabaseClient:
             'state': state,
             'address': str(item.get('address')) if item.get('address') else None,
             'auction_date': auction_date,
-            'days_remaining': int(item.get('days_remaining', 0)) if item.get('days_remaining') is not None else None,
             'auction_type': str(item.get('auction_type', 'Leilão'))[:100],
             'auction_name': str(item.get('auction_name')) if item.get('auction_name') else None,
             'store_name': str(item.get('store_name')) if item.get('store_name') else None,
             'lot_number': str(item.get('lot_number')) if item.get('lot_number') else None,
-            'total_visits': int(item.get('total_visits', 0)),
-            'total_bids': int(item.get('total_bids', 0)),
-            'total_bidders': int(item.get('total_bidders', 0)),
             'link': str(item.get('link')) if item.get('link') else None,
             'metadata': metadata,
             'is_active': True,
             'last_scraped_at': datetime.now().isoformat(),
-            # ✅ Informações de praça
-            'auction_round': int(item.get('auction_round')) if item.get('auction_round') is not None else None,
-            'discount_percentage': float(item.get('discount_percentage')) if item.get('discount_percentage') is not None else None,
-            'first_round_value': float(item.get('first_round_value')) if item.get('first_round_value') is not None else None,
-            'first_round_date': str(item.get('first_round_date')) if item.get('first_round_date') else None,
+            
+            # ✅ SIMPLIFICADO
+            'has_bid': has_bid,  # Boolean
+            'auction_round': auction_round,  # NULL ou 2
         }
         
         # ✅ Campos específicos por tabela
         if tabela == 'veiculos':
-            # Tenta pegar do root primeiro, depois do metadata
             vehicle_type = item.get('vehicle_type')
             if not vehicle_type and isinstance(metadata, dict):
                 vehicle_type = metadata.get('vehicle_type')
@@ -227,7 +246,6 @@ class SupabaseClient:
                 data['vehicle_type'] = str(vehicle_type)[:255]
         
         if tabela == 'imoveis':
-            # Property type para imóveis
             property_type = item.get('property_type')
             if not property_type and isinstance(metadata, dict):
                 property_type = metadata.get('property_type')
@@ -236,7 +254,6 @@ class SupabaseClient:
                 data['property_type'] = str(property_type)[:255]
         
         if tabela == 'animais':
-            # Animal type para animais
             animal_type = item.get('animal_type')
             if not animal_type and isinstance(metadata, dict):
                 animal_type = metadata.get('animal_type')
@@ -245,7 +262,6 @@ class SupabaseClient:
                 data['animal_type'] = str(animal_type)[:255]
         
         if tabela == 'tecnologia':
-            # Multiple category para tecnologia
             multiplecategory = item.get('multiplecategory')
             if not multiplecategory and isinstance(metadata, dict):
                 multiplecategory = metadata.get('multiplecategory')
@@ -253,7 +269,6 @@ class SupabaseClient:
             if multiplecategory and isinstance(multiplecategory, list):
                 data['multiplecategory'] = multiplecategory
             
-            # Tech type (novo campo adicional)
             tech_type = item.get('tech_type')
             if not tech_type and isinstance(metadata, dict):
                 tech_type = metadata.get('tech_type')
@@ -262,7 +277,6 @@ class SupabaseClient:
                 data['tech_type'] = str(tech_type)[:255]
         
         if tabela == 'bens_consumo':
-            # Consumption goods type
             consumption_goods_type = item.get('consumption_goods_type')
             if not consumption_goods_type and isinstance(metadata, dict):
                 consumption_goods_type = metadata.get('consumption_goods_type')
@@ -271,7 +285,6 @@ class SupabaseClient:
                 data['consumption_goods_type'] = str(consumption_goods_type)[:255]
         
         if tabela == 'partes_pecas':
-            # Parts type
             parts_type = item.get('parts_type')
             if not parts_type and isinstance(metadata, dict):
                 parts_type = metadata.get('parts_type')
@@ -280,7 +293,6 @@ class SupabaseClient:
                 data['parts_type'] = str(parts_type)[:255]
         
         if tabela == 'nichados':
-            # Specialized type
             specialized_type = item.get('specialized_type')
             if not specialized_type and isinstance(metadata, dict):
                 specialized_type = metadata.get('specialized_type')
@@ -289,7 +301,6 @@ class SupabaseClient:
                 data['specialized_type'] = str(specialized_type)[:255]
         
         if tabela == 'eletrodomesticos':
-            # Appliance type
             appliance_type = item.get('appliance_type')
             if not appliance_type and isinstance(metadata, dict):
                 appliance_type = metadata.get('appliance_type')
@@ -298,7 +309,6 @@ class SupabaseClient:
                 data['appliance_type'] = str(appliance_type)[:255]
         
         if tabela == 'materiais_construcao':
-            # Construction material type
             construction_material_type = item.get('construction_material_type')
             if not construction_material_type and isinstance(metadata, dict):
                 construction_material_type = metadata.get('construction_material_type')
@@ -307,6 +317,67 @@ class SupabaseClient:
                 data['construction_material_type'] = str(construction_material_type)[:255]
         
         return data
+    
+    def save_bid_history_snapshot(self, category: str, items: list) -> dict:
+        """
+        ✅ SALVA SNAPSHOT NO HISTÓRICO
+        
+        Estrutura simplificada:
+        - category
+        - external_id
+        - has_bid (boolean)
+        - current_value
+        - captured_at
+        """
+        if not items:
+            return {'saved': 0, 'errors': 0}
+        
+        snapshots = []
+        
+        for item in items:
+            try:
+                snapshot = {
+                    'category': category,
+                    'source': item.get('source'),
+                    'external_id': item.get('external_id'),
+                    'lot_number': item.get('lot_number'),
+                    'has_bid': bool(item.get('has_bid', False)),  # ✅ Boolean
+                    'current_value': float(item.get('value')) if item.get('value') else None,
+                    'captured_at': datetime.now().isoformat(),
+                }
+                
+                if snapshot['external_id']:
+                    snapshots.append(snapshot)
+            
+            except Exception as e:
+                print(f"  ⚠️ Erro ao criar snapshot: {e}")
+        
+        if not snapshots:
+            return {'saved': 0, 'errors': 0}
+        
+        # Insert no histórico
+        stats = {'saved': 0, 'errors': 0}
+        url = f"{self.url}/rest/v1/auction_bid_history"
+        
+        batch_size = 1000
+        for i in range(0, len(snapshots), batch_size):
+            batch = snapshots[i:i+batch_size]
+            
+            try:
+                r = self.session.post(url, json=batch, timeout=120)
+                
+                if r.status_code in (200, 201):
+                    stats['saved'] += len(batch)
+                else:
+                    stats['errors'] += len(batch)
+            
+            except Exception as e:
+                print(f"  ⚠️ Erro ao salvar histórico: {e}")
+                stats['errors'] += len(batch)
+            
+            time.sleep(0.3)
+        
+        return stats
     
     def test(self) -> bool:
         """Testa conexão"""
@@ -346,3 +417,46 @@ class SupabaseClient:
     def __del__(self):
         if hasattr(self, 'session'):
             self.session.close()
+
+
+# ========== TESTE ==========
+if __name__ == "__main__":
+    print("\n🧪 TESTANDO SUPABASE CLIENT - ESTRUTURA SIMPLIFICADA\n")
+    print("="*80)
+    
+    # Teste de preparação de item
+    client = SupabaseClient()
+    
+    test_item = {
+        'source': 'superbid',
+        'external_id': 'superbid_123456',
+        'title': 'Honda Civic 2020',
+        'value': 50000,
+        'value_text': 'R$ 50.000,00',
+        'city': 'São Paulo',
+        'state': 'SP',
+        'auction_date': '2026-01-27 14:00:00-03',
+        'has_bid': True,  # ✅ Boolean
+        'auction_round': None,  # ✅ NULL = 1ª praça
+        'vehicle_type': 'carro',
+    }
+    
+    prepared = client._prepare(test_item, 'veiculos')
+    
+    print("Item preparado:")
+    print(f"  has_bid: {prepared.get('has_bid')} (tipo: {type(prepared.get('has_bid'))})")
+    print(f"  auction_round: {prepared.get('auction_round')} (tipo: {type(prepared.get('auction_round'))})")
+    
+    print("\n✅ Campos removidos (não presentes):")
+    removed = ['total_bids', 'total_bidders', 'total_visits', 'days_remaining']
+    for field in removed:
+        if field not in prepared:
+            print(f"  ❌ {field}: (removido corretamente)")
+    
+    print("\n✅ Campos mantidos:")
+    kept = ['has_bid', 'auction_round']
+    for field in kept:
+        if field in prepared:
+            print(f"  ✓ {field}: {prepared[field]}")
+    
+    print("="*80)

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-NORMALIZER FORTALECIDO - Limpeza Avançada de Dados
-✅ FIX: Aceita auction_date no formato PostgreSQL timestamptz
+NORMALIZER ATUALIZADO - Estrutura Simplificada
+✅ has_bid (boolean)
+✅ auction_round (NULL ou 2)
+❌ Removido: days_remaining (calculado na view)
+❌ Removido: total_bids, total_bidders, total_visits
 """
 
 import re
@@ -10,7 +13,7 @@ from typing import Dict, List, Optional
 
 
 class UniversalNormalizer:
-    """Normalizador com limpeza avançada e captura de metadados"""
+    """Normalizador com estrutura simplificada"""
     
     VALID_STATES = [
         'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
@@ -24,25 +27,26 @@ class UniversalNormalizer:
     }
     
     def normalize(self, item: dict) -> dict:
-        """Normaliza item para estrutura uniforme e limpa"""
+        """Normaliza item para estrutura uniforme"""
         
         source = item.get('source', '').lower()
         external_id = item.get('external_id', '')
         raw_title = item.get('title', '')
         raw_description = item.get('description', '')
         
-        # Extrai título limpo do external_id (MegaLeilões)
+        # Extrai título limpo
         if source == 'megaleiloes' and external_id:
             clean_title = self._extract_title_from_external_id(external_id)
         else:
             clean_title = self._clean_title(raw_title, remove_auction_info=True)
         
-        # Aplica Title Case inteligente
+        # Title Case
         clean_title = self._smart_title_case(clean_title)
         
-        # Descrição super limpa
+        # Descrição limpa
         clean_description = self._deep_clean_description(raw_description, remove_auction_info=True)
         
+        # ✅ ESTRUTURA SIMPLIFICADA
         return {
             # IDs
             'source': item.get('source'),
@@ -60,29 +64,23 @@ class UniversalNormalizer:
             'value': self._parse_value(item.get('value')),
             'value_text': item.get('value_text'),
             
-            # Informações de praça
-            'auction_round': item.get('auction_round'),
-            'discount_percentage': item.get('discount_percentage'),
-            'first_round_value': self._parse_value(item.get('first_round_value')),
-            'first_round_date': item.get('first_round_date'),
-            
             # Localização
             'city': self._clean_city(item.get('city')),
             'state': self._validate_state(item.get('state')),
             'address': self._clean_address(item.get('address')),
             
-            # ✅ LEILÃO - auction_date COM VALIDAÇÃO CORRIGIDA
+            # Leilão
             'auction_date': self._parse_date(item.get('auction_date')),
-            'days_remaining': self._parse_days_remaining(item.get('days_remaining')),
             'auction_type': self._clean_text(item.get('auction_type'), 'Leilão'),
             'auction_name': self._clean_text(item.get('auction_name')),
             'store_name': self._clean_text(item.get('store_name')),
             'lot_number': self._clean_text(item.get('lot_number')),
             
-            # Estatísticas
-            'total_visits': self._parse_int(item.get('total_visits'), 0),
-            'total_bids': self._parse_int(item.get('total_bids'), 0),
-            'total_bidders': self._parse_int(item.get('total_bidders'), 0),
+            # ✅ SIMPLIFICADO: apenas has_bid (boolean)
+            'has_bid': self._parse_bool(item.get('has_bid'), False),
+            
+            # ✅ auction_round: NULL = 1ª praça, 2 = 2ª praça
+            'auction_round': self._parse_auction_round(item.get('auction_round')),
             
             # Link
             'link': item.get('link'),
@@ -101,6 +99,39 @@ class UniversalNormalizer:
             # Metadata
             'metadata': self._build_metadata(item),
         }
+    
+    def _parse_bool(self, value, default: bool = False) -> bool:
+        """Parse boolean"""
+        if value is None:
+            return default
+        
+        if isinstance(value, bool):
+            return value
+        
+        if isinstance(value, (int, float)):
+            return value > 0
+        
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes', 'sim')
+        
+        return default
+    
+    def _parse_auction_round(self, value) -> Optional[int]:
+        """
+        Parse auction_round
+        - NULL = 1ª praça (padrão)
+        - 2 = 2ª praça
+        """
+        if value is None:
+            return None
+        
+        try:
+            round_int = int(value)
+            # Aceita apenas 2 (segunda praça)
+            # Qualquer outro valor vira NULL
+            return 2 if round_int == 2 else None
+        except:
+            return None
     
     def _extract_title_from_external_id(self, external_id: str) -> str:
         """Extrai título do external_id do MegaLeilões"""
@@ -134,7 +165,7 @@ class UniversalNormalizer:
         clean = re.sub(r'<[^>]+>', '', clean)
         clean = clean.replace('&nbsp;', ' ').replace('&amp;', '&')
         
-        # Remove info de praça do título
+        # Remove info de praça
         if remove_auction_info:
             clean = re.sub(r'\d+%\s*(?:abaixo|desconto|off)?\s*na\s*\d+[ªº]\s*pra[çc]a', '', clean, flags=re.IGNORECASE)
             clean = re.sub(r'\d+[ªº]\s*pra[çc]a', '', clean, flags=re.IGNORECASE)
@@ -312,7 +343,7 @@ class UniversalNormalizer:
     
     def _parse_date(self, date_str: Optional[str]) -> Optional[str]:
         """
-        ✅ FIX: Valida e aceita múltiplos formatos de data
+        Valida e aceita múltiplos formatos de data
         
         Aceita:
         - ISO com T: 2026-01-27T11:03:00
@@ -328,25 +359,11 @@ class UniversalNormalizer:
         if not date_clean:
             return None
         
-        # ✅ Aceita formato ISO com 'T' OU formato PostgreSQL com espaço
-        # Padrão: YYYY-MM-DD HH:MM:SS (com ou sem timezone)
+        # Aceita formato ISO com 'T' OU formato PostgreSQL com espaço
         if 'T' in date_clean or re.match(r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}', date_clean):
             return date_clean
         
         return None
-    
-    def _parse_days_remaining(self, days) -> Optional[int]:
-        """Parse dias restantes"""
-        if days is None:
-            return None
-        
-        try:
-            days_int = int(days)
-            if days_int < 0:
-                return 0
-            return days_int
-        except:
-            return None
     
     def _clean_text(self, text: Optional[str], default: Optional[str] = None) -> Optional[str]:
         """Limpa texto"""
@@ -365,16 +382,6 @@ class UniversalNormalizer:
             clean = clean[:197] + '...'
         
         return clean
-    
-    def _parse_int(self, value, default: int = 0) -> int:
-        """Parse inteiro"""
-        if value is None:
-            return default
-        
-        try:
-            return int(value)
-        except:
-            return default
     
     def _build_metadata(self, item: dict) -> dict:
         """Build metadata"""
@@ -406,7 +413,7 @@ def normalize_item(item: dict) -> dict:
 
 # ========== TESTE ==========
 if __name__ == "__main__":
-    print("\n🧪 TESTANDO NORMALIZER - auction_date FIX\n")
+    print("\n🧪 TESTANDO NORMALIZER - ESTRUTURA SIMPLIFICADA\n")
     print("="*80)
     
     normalizer = UniversalNormalizer()
@@ -421,23 +428,27 @@ if __name__ == "__main__":
         'city': 'São Paulo',
         'state': 'SP',
         'link': 'https://exchange.superbid.net/oferta/4509859',
-        'auction_date': '2026-01-27 11:03:00-03',  # ✅ Formato PostgreSQL
+        'auction_date': '2026-01-27 11:03:00-03',
+        'has_bid': True,  # ✅ Boolean
+        'auction_round': None,  # ✅ NULL = 1ª praça
         'vehicle_type': 'carro',
     }
     
     print("ANTES da normalização:")
-    print(f"  auction_date: {test_item.get('auction_date')}")
-    print(f"  Tipo: {type(test_item.get('auction_date'))}")
+    print(f"  has_bid: {test_item.get('has_bid')} (tipo: {type(test_item.get('has_bid'))})")
+    print(f"  auction_round: {test_item.get('auction_round')} (tipo: {type(test_item.get('auction_round'))})")
     
     normalized = normalizer.normalize(test_item)
     
     print("\nDEPOIS da normalização:")
+    print(f"  has_bid: {normalized.get('has_bid')} (tipo: {type(normalized.get('has_bid'))})")
+    print(f"  auction_round: {normalized.get('auction_round')} (tipo: {type(normalized.get('auction_round'))})")
     print(f"  auction_date: {normalized.get('auction_date')}")
-    print(f"  Tipo: {type(normalized.get('auction_date'))}")
     
-    if normalized.get('auction_date'):
-        print("\n✅ SUCCESS: auction_date preservado!")
-    else:
-        print("\n❌ FAIL: auction_date foi perdido!")
+    print("\n✅ Campos removidos (não presentes):")
+    removed = ['total_bids', 'total_bidders', 'total_visits', 'days_remaining']
+    for field in removed:
+        if field not in normalized:
+            print(f"  ❌ {field}: (removido corretamente)")
     
     print("="*80)

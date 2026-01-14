@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPERBID - SCRAPER SIMPLIFICADO
-Mapeamento direto: URL do site → Tabela do banco
-Sem IA, sem keywords, apenas categorias oficiais do Superbid
+SUPERBID - SCRAPER ATUALIZADO
+✅ Estrutura simplificada: has_bid (boolean) + auction_round
+❌ Removido: total_bids, total_bidders, total_visits, days_remaining
 """
 
 import sys
@@ -23,25 +23,25 @@ from normalizer import normalize_items
 
 
 class SuperbidScraper:
-    """Scraper com mapeamento direto de categorias do site"""
+    """Scraper com estrutura simplificada"""
     
     def __init__(self):
         self.source = 'superbid'
         self.base_url = 'https://offer-query.superbid.net/seo/offers/'
         self.site_url = 'https://exchange.superbid.net'
         
-        # MAPEAMENTO DIRETO: (url_slug, tabela_destino, nome_exibicao, campos_extras)
+        # MAPEAMENTO: (url_slug, tabela, nome_exibicao, campos_extras)
         self.sections = [
-            # ========== ALIMENTOS E BEBIDAS ==========
+            # ALIMENTOS E BEBIDAS
             ('alimentos-e-bebidas', 'alimentos_bebidas', 'Alimentos e Bebidas', {}),
             
-            # ========== ANIMAIS (1 tipo) ==========
+            # ANIMAIS
             ('animais/bovinos', 'animais', 'Bovinos', {'animal_type': 'gado_bovino'}),
             
-            # ========== ARTES E COLECIONISMO ==========
+            # ARTES E COLECIONISMO
             ('artes-decoracao-colecionismo', 'artes_colecionismo', 'Artes e Colecionismo', {}),
             
-            # ========== BENS DE CONSUMO (7 tipos) ==========
+            # BENS DE CONSUMO
             ('bolsas-canetas-joias-e-relogios/acessorios', 'bens_consumo', 'Acessórios', {'consumption_goods_type': 'acessorios'}),
             ('bolsas-canetas-joias-e-relogios/bolsas', 'bens_consumo', 'Bolsas', {'consumption_goods_type': 'bolsas'}),
             ('bolsas-canetas-joias-e-relogios/canetas', 'bens_consumo', 'Canetas', {'consumption_goods_type': 'canetas'}),
@@ -50,43 +50,43 @@ class SuperbidScraper:
             ('oportunidades/pet', 'bens_consumo', 'Pet', {'consumption_goods_type': 'pet'}),
             ('oportunidades/vestuarios', 'bens_consumo', 'Vestuários', {'consumption_goods_type': 'vestuarios'}),
             
-            # ========== VEÍCULOS - CAMINHÕES/ÔNIBUS (4 tipos) ==========
+            # VEÍCULOS - CAMINHÕES/ÔNIBUS
             ('caminhoes-onibus/onibus', 'veiculos', 'Ônibus', {'vehicle_type': 'onibus'}),
             ('caminhoes-onibus/caminhoes', 'veiculos', 'Caminhões', {'vehicle_type': 'caminhao'}),
             ('caminhoes-onibus/vans', 'veiculos', 'Vans', {'vehicle_type': 'van'}),
             ('caminhoes-onibus/impl-rod-e-carrocerias', 'veiculos', 'Implementos Rodoviários', {'vehicle_type': 'implemento_rodoviario'}),
             
-            # ========== VEÍCULOS - CARROS/MOTOS (3 tipos) ==========
+            # VEÍCULOS - CARROS/MOTOS
             ('carros-motos/carros', 'veiculos', 'Carros', {'vehicle_type': 'carro'}),
             ('carros-motos/motos', 'veiculos', 'Motos', {'vehicle_type': 'moto'}),
             ('carros-motos/varias-ferramentas', 'veiculos', 'Veículos Diversos', {'vehicle_type': 'outro'}),
             
-            # ========== VEÍCULOS - EMBARCAÇÕES/AERONAVES (4 tipos) ==========
+            # VEÍCULOS - EMBARCAÇÕES/AERONAVES
             ('embarcacoes-aeronaves/embarcacoes-e-navios', 'veiculos', 'Embarcações e Navios', {'vehicle_type': 'barco'}),
             ('embarcacoes-aeronaves/jet-skis', 'veiculos', 'Jet Skis', {'vehicle_type': 'jetski'}),
             ('embarcacoes-aeronaves/lanchas-e-barcos', 'veiculos', 'Lanchas e Barcos', {'vehicle_type': 'barco'}),
             ('embarcacoes-aeronaves/avioes', 'veiculos', 'Aviões', {'vehicle_type': 'aeronave'}),
             
-            # ========== PARTES E PEÇAS (4 tipos) ==========
+            # PARTES E PEÇAS
             ('caminhoes-onibus/partes-e-pecas-caminhoes-e-onibus', 'partes_pecas', 'Peças Caminhões/Ônibus', {'parts_type': 'caminhoes_onibus'}),
             ('carros-motos/partes-e-pecas-carros-e-motos', 'partes_pecas', 'Peças Carros/Motos', {'parts_type': 'carros_motos'}),
             ('embarcacoes-aeronaves/pecas-e-acessorios', 'partes_pecas', 'Peças Embarcações/Aeronaves', {'parts_type': 'embarcacoes_aeronaves'}),
             ('partes-e-pecas', 'partes_pecas', 'Peças Variadas', {'parts_type': 'variados'}),
             
-            # ========== NICHADOS (5 tipos) ==========
+            # NICHADOS
             ('cozinhas-e-restaurantes/restaurantes', 'nichados', 'Restaurantes', {'specialized_type': 'restaurante'}),
             ('cozinhas-e-restaurantes/cozinhas-industriais', 'nichados', 'Cozinhas Industriais', {'specialized_type': 'cozinha_industrial'}),
             ('oportunidades/negocios', 'nichados', 'Negócios', {'specialized_type': 'negocios'}),
             ('oportunidades/lazer', 'nichados', 'Lazer', {'specialized_type': 'lazer'}),
             ('oportunidades/esportes', 'nichados', 'Esportes', {'specialized_type': 'esportes'}),
             
-            # ========== ELETRODOMÉSTICOS (4 tipos) ==========
+            # ELETRODOMÉSTICOS
             ('eletrodomesticos/refrigeradores', 'eletrodomesticos', 'Refrigeradores', {'appliance_type': 'refrigerador'}),
             ('eletrodomesticos/fornos-e-fogoes', 'eletrodomesticos', 'Fornos e Fogões', {'appliance_type': 'fogao_forno'}),
             ('eletrodomesticos/eletroportateis', 'eletrodomesticos', 'Eletroportáteis', {'appliance_type': 'eletroportatil'}),
             ('eletrodomesticos/limpeza', 'eletrodomesticos', 'Limpeza', {'appliance_type': 'limpeza'}),
             
-            # ========== IMÓVEIS (6 tipos) ==========
+            # IMÓVEIS
             ('imoveis/imoveis-industriais', 'imoveis', 'Imóveis Industriais', {'property_type': 'galpao_industrial'}),
             ('imoveis/terrenos-e-lotes', 'imoveis', 'Terrenos e Lotes', {'property_type': 'terreno_lote'}),
             ('imoveis/imoveis-flutuantes', 'imoveis', 'Imóveis Flutuantes', {'property_type': 'flutuante'}),
@@ -94,26 +94,26 @@ class SuperbidScraper:
             ('imoveis/imoveis-comerciais', 'imoveis', 'Imóveis Comerciais', {'property_type': 'comercial'}),
             ('imoveis/imoveis-residenciais', 'imoveis', 'Imóveis Residenciais', {'property_type': 'residencial'}),
             
-            # ========== INDUSTRIAL EQUIPAMENTOS (3 categorias agregadas) ==========
+            # INDUSTRIAL EQUIPAMENTOS
             ('industrial-maquinas-equipamentos', 'industrial_equipamentos', 'Industrial e Máquinas', {}),
             ('movimentacao-transporte', 'industrial_equipamentos', 'Movimentação e Transporte', {}),
             ('oportunidades/teste', 'industrial_equipamentos', 'Equipamentos Teste', {}),
             
-            # ========== MÁQUINAS PESADAS E AGRÍCOLAS ==========
+            # MÁQUINAS PESADAS E AGRÍCOLAS
             ('maquinas-pesadas-agricolas', 'maquinas_pesadas_agricolas', 'Máquinas Pesadas e Agrícolas', {}),
             
-            # ========== MATERIAIS CONSTRUÇÃO (3 tipos) ==========
+            # MATERIAIS CONSTRUÇÃO
             ('materiais-para-construcao-civil/ferramentas', 'materiais_construcao', 'Ferramentas', {'construction_material_type': 'ferramentas'}),
             ('materiais-para-construcao-civil/materiais', 'materiais_construcao', 'Materiais', {'construction_material_type': 'materiais'}),
             ('materiais-para-construcao-civil/eletrica-e-iluminacao', 'materiais_construcao', 'Elétrica e Iluminação', {'construction_material_type': 'eletrica_iluminacao'}),
             
-            # ========== MÓVEIS E DECORAÇÃO ==========
+            # MÓVEIS E DECORAÇÃO
             ('moveis-e-decoracao', 'moveis_decoracao', 'Móveis e Decoração', {}),
             
-            # ========== SUCATAS E RESÍDUOS ==========
+            # SUCATAS E RESÍDUOS
             ('sucatas-materiais-residuos', 'sucatas_residuos', 'Sucatas e Resíduos', {}),
             
-            # ========== TECNOLOGIA (3 tipos) ==========
+            # TECNOLOGIA
             ('tecnologia/informatica', 'tecnologia', 'Informática', {'tech_type': 'informatica'}),
             ('tecnologia/telefonia', 'tecnologia', 'Telefonia', {'tech_type': 'telefonia'}),
             ('tecnologia/eletronicos', 'tecnologia', 'Eletrônicos', {'tech_type': 'eletronicos'}),
@@ -138,18 +138,14 @@ class SuperbidScraper:
         self.session.headers.update(self.headers)
     
     def scrape(self) -> dict:
-        """
-        Scrape completo do Superbid
-        Returns: dict com items agrupados por tabela
-        """
+        """Scrape completo"""
         print("\n" + "="*60)
-        print("🔵 SUPERBID - SCRAPER SIMPLIFICADO")
+        print("🔵 SUPERBID - SCRAPER ATUALIZADO")
         print("="*60)
         
         items_by_table = defaultdict(list)
         global_ids = set()
         
-        # Varre cada seção
         for url_slug, table, display_name, extra_fields in self.sections:
             print(f"\n📦 {display_name} → {table}")
             
@@ -162,7 +158,6 @@ class SuperbidScraper:
             self.stats['by_table'][table] += len(section_items)
             
             print(f"✅ {len(section_items)} itens → {table}")
-            
             time.sleep(2)
         
         self.stats['total_scraped'] = sum(len(items) for items in items_by_table.values())
@@ -171,7 +166,7 @@ class SuperbidScraper:
     def _scrape_section(self, url_slug: str, table: str, 
                        display_name: str, extra_fields: dict, 
                        global_ids: set) -> List[dict]:
-        """Scrape uma seção específica via API"""
+        """Scrape uma seção específica"""
         items = []
         page_num = 1
         page_size = 100
@@ -183,7 +178,6 @@ class SuperbidScraper:
             print(f"  Pág {page_num}", end='', flush=True)
             
             try:
-                # Parâmetros da API Superbid
                 params = {
                     "urlSeo": f"https://exchange.superbid.net/categorias/{url_slug}",
                     "locale": "pt_BR",
@@ -229,7 +223,6 @@ class SuperbidScraper:
                     if not item:
                         continue
                     
-                    # Verifica duplicata
                     if item['external_id'] in global_ids:
                         duplicados += 1
                         self.stats['duplicates'] += 1
@@ -245,7 +238,6 @@ class SuperbidScraper:
                 else:
                     print(f" ⚪ 0 novos (dup: {duplicados})")
                 
-                # Verifica se é última página
                 if len(offers) < page_size:
                     break
                 
@@ -268,9 +260,14 @@ class SuperbidScraper:
     
     def _extract_offer(self, offer: dict, table: str, 
                       display_name: str, extra_fields: dict) -> Optional[dict]:
-        """Extrai dados da oferta Superbid"""
+        """
+        ✅ EXTRAI DADOS DA API - ESTRUTURA SIMPLIFICADA
+        
+        Campos principais:
+        - has_bid (boolean): total_bids > 0
+        - auction_round: NULL = 1ª praça
+        """
         try:
-            # Estrutura da resposta da API
             product = offer.get("product", {})
             auction = offer.get("auction", {})
             detail = offer.get("offerDetail", {})
@@ -296,16 +293,18 @@ class SuperbidScraper:
             value = detail.get("currentMinBid") or detail.get("initialBidValue")
             value_text = detail.get("currentMinBidFormatted") or detail.get("initialBidValueFormatted")
             
-            # ✅ Localização - tenta de 3 fontes (prioridade: product.location > seller.city)
+            # ✅ HAS_BID - Simplificado (boolean)
+            total_bids = offer.get("totalBids", 0)
+            has_bid = total_bids > 0
+            
+            # Localização
             city = None
             state = None
             
-            # 1) Tenta pegar do product.location (mais confiável)
             location = product.get("location", {})
             location_city = location.get("city", "")
             
             if location_city:
-                # Formato: "Ipatinga - MG" ou "Ipatinga/MG"
                 if ' - ' in location_city:
                     parts = location_city.split(' - ')
                     city = parts[0].strip()
@@ -317,7 +316,6 @@ class SuperbidScraper:
                 else:
                     city = location_city.strip()
             
-            # 2) Fallback: seller.city
             if not city:
                 seller_city = seller.get("city", "") or ""
                 if seller_city:
@@ -332,10 +330,8 @@ class SuperbidScraper:
                     else:
                         city = seller_city.strip()
             
-            # 3) Se não tem state ainda, tenta pegar de location.state e converte nome completo para sigla
             if not state and location.get("state"):
                 state_full = location.get("state", "")
-                # Mapeia nome completo para sigla
                 state_map = {
                     'Acre': 'AC', 'Alagoas': 'AL', 'Amapá': 'AP', 'Amazonas': 'AM',
                     'Bahia': 'BA', 'Ceará': 'CE', 'Distrito Federal': 'DF', 'Espírito Santo': 'ES',
@@ -350,20 +346,17 @@ class SuperbidScraper:
             # Link
             link = f"https://exchange.superbid.net/oferta/{offer_id}"
             
-            # ✅ Data do leilão - FORMATO CORRETO
+            # Data do leilão
             auction_date = None
             end_date_str = offer.get("endDate")
             if end_date_str:
                 try:
-                    # Formato que vem da API: "2026-01-27 11:02:00" (SEM timezone)
-                    # Assume que é horário de Brasília e adiciona offset -03:00
                     dt = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S')
-                    # Formata no padrão PostgreSQL timestamptz
                     auction_date = dt.strftime('%Y-%m-%d %H:%M:%S-03')
                 except:
                     pass
             
-            # Monta item base
+            # ✅ ITEM SIMPLIFICADO
             item = {
                 'source': 'superbid',
                 'external_id': external_id,
@@ -382,9 +375,11 @@ class SuperbidScraper:
                 'store_name': store.get("name"),
                 'lot_number': offer.get("lotNumber"),
                 
-                'total_visits': offer.get("visits", 0),
-                'total_bids': offer.get("totalBids", 0),
-                'total_bidders': offer.get("totalBidders", 0),
+                # ✅ SIMPLIFICADO: apenas has_bid
+                'has_bid': has_bid,
+                
+                # auction_round: NULL = 1ª praça (SuperBid não fornece info de praça)
+                'auction_round': None,
                 
                 'metadata': {
                     'secao_site': display_name,
@@ -393,16 +388,15 @@ class SuperbidScraper:
                 }
             }
             
-            # Adiciona campos extras (vehicle_type, property_type, etc.)
+            # Adiciona campos extras
             if extra_fields:
                 item.update(extra_fields)
             
-            # Filtra itens de teste/demo
+            # Filtros
             store_name = str(store.get("name", "")).lower()
             if 'demo' in store_name or 'test' in store_name:
                 return None
             
-            # Valor muito baixo (suspeito)
             if value and value < 1:
                 return None
             
@@ -415,16 +409,14 @@ class SuperbidScraper:
 def main():
     """Execução principal"""
     print("\n" + "="*70)
-    print("🚀 SUPERBID - SCRAPER SIMPLIFICADO")
+    print("🚀 SUPERBID - SCRAPER ATUALIZADO")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
     
     start_time = time.time()
     
-    # ========================================
     # FASE 1: SCRAPE
-    # ========================================
     print("\n🔥 FASE 1: COLETANDO DADOS")
     scraper = SuperbidScraper()
     items_by_table = scraper.scrape()
@@ -438,9 +430,7 @@ def main():
         print("⚠️ Nenhum item coletado - encerrando")
         return
     
-    # ========================================
     # FASE 2: NORMALIZAÇÃO
-    # ========================================
     print("\n✨ FASE 2: NORMALIZANDO DADOS")
     
     normalized_by_table = {}
@@ -457,19 +447,7 @@ def main():
             print(f"  ⚠️ Erro em {table}: {e}")
             normalized_by_table[table] = items
     
-    # Salva JSON normalizado (debug)
-    output_dir = Path(__file__).parent / 'data' / 'normalized'
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    json_file = output_dir / f'superbid_{timestamp}.json'
-    
-    with open(json_file, 'w', encoding='utf-8') as f:
-        json.dump(normalized_by_table, f, ensure_ascii=False, indent=2)
-    print(f"💾 JSON salvo: {json_file}")
-    
-    # ========================================
     # FASE 3: INSERT NO SUPABASE
-    # ========================================
     print("\n📤 FASE 3: INSERINDO NO SUPABASE")
     
     try:
@@ -503,9 +481,7 @@ def main():
     except Exception as e:
         print(f"⚠️ Erro no Supabase: {e}")
     
-    # ========================================
     # ESTATÍSTICAS FINAIS
-    # ========================================
     elapsed = time.time() - start_time
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
@@ -513,7 +489,7 @@ def main():
     print("\n" + "="*70)
     print("📊 ESTATÍSTICAS FINAIS")
     print("="*70)
-    print(f"🔵 Superbid - Scraper Simplificado:")
+    print(f"🔵 Superbid - Scraper Atualizado:")
     print(f"\n  Por Tabela:")
     for table, count in sorted(scraper.stats['by_table'].items()):
         print(f"    • {table}: {count} itens")
