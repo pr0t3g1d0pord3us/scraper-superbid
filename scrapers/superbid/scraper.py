@@ -1,129 +1,124 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPERBID - SCRAPER ATUALIZADO
-✅ Estrutura simplificada: has_bid (boolean) + auction_round
-❌ Removido: total_bids, total_bidders, total_visits, days_remaining
+SUPERBID - SCRAPER DIRETO PARA superbid_items
+✅ Remove dependência do normalizer
+✅ Salva diretamente na tabela superbid_items
+✅ Extrai todos os campos da API JSON
+✅ Mantém informações detalhadas (marca, modelo, ano, leiloeiro, etc)
 """
 
 import sys
 import json
 import time
-import random
 import requests
 from pathlib import Path
 from datetime import datetime
+from typing import List, Dict, Optional
 from collections import defaultdict
-from typing import List, Optional
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from supabase_client import SupabaseClient
-from normalizer import normalize_items
 
 
 class SuperbidScraper:
-    """Scraper com estrutura simplificada"""
+    """Scraper para Superbid com mapeamento de categorias"""
     
     def __init__(self):
         self.source = 'superbid'
         self.base_url = 'https://offer-query.superbid.net/seo/offers/'
         self.site_url = 'https://exchange.superbid.net'
         
-        # MAPEAMENTO: (url_slug, tabela, nome_exibicao, campos_extras)
+        # Mapeamento: (url_slug, category, display_name)
         self.sections = [
             # ALIMENTOS E BEBIDAS
-            ('alimentos-e-bebidas', 'alimentos_bebidas', 'Alimentos e Bebidas', {}),
+            ('alimentos-e-bebidas', 'Alimentos e Bebidas', 'Alimentos e Bebidas'),
             
             # ANIMAIS
-            ('animais/bovinos', 'animais', 'Bovinos', {'animal_type': 'gado_bovino'}),
+            ('animais/bovinos', 'Bovinos', 'Bovinos'),
             
             # ARTES E COLECIONISMO
-            ('artes-decoracao-colecionismo', 'artes_colecionismo', 'Artes e Colecionismo', {}),
+            ('artes-decoracao-colecionismo', 'Artes e Colecionismo', 'Artes e Colecionismo'),
             
             # BENS DE CONSUMO
-            ('bolsas-canetas-joias-e-relogios/acessorios', 'bens_consumo', 'Acessórios', {'consumption_goods_type': 'acessorios'}),
-            ('bolsas-canetas-joias-e-relogios/bolsas', 'bens_consumo', 'Bolsas', {'consumption_goods_type': 'bolsas'}),
-            ('bolsas-canetas-joias-e-relogios/canetas', 'bens_consumo', 'Canetas', {'consumption_goods_type': 'canetas'}),
-            ('bolsas-canetas-joias-e-relogios/relogios', 'bens_consumo', 'Relógios', {'consumption_goods_type': 'relogios'}),
-            ('oportunidades/beneficentes', 'bens_consumo', 'Beneficentes', {'consumption_goods_type': 'beneficentes'}),
-            ('oportunidades/pet', 'bens_consumo', 'Pet', {'consumption_goods_type': 'pet'}),
-            ('oportunidades/vestuarios', 'bens_consumo', 'Vestuários', {'consumption_goods_type': 'vestuarios'}),
+            ('bolsas-canetas-joias-e-relogios/acessorios', 'Acessórios', 'Acessórios'),
+            ('bolsas-canetas-joias-e-relogios/bolsas', 'Bolsas', 'Bolsas'),
+            ('bolsas-canetas-joias-e-relogios/canetas', 'Canetas', 'Canetas'),
+            ('bolsas-canetas-joias-e-relogios/relogios', 'Relógios', 'Relógios'),
+            ('oportunidades/beneficentes', 'Beneficentes', 'Beneficentes'),
+            ('oportunidades/pet', 'Pet', 'Pet'),
+            ('oportunidades/vestuarios', 'Vestuários', 'Vestuários'),
             
             # VEÍCULOS - CAMINHÕES/ÔNIBUS
-            ('caminhoes-onibus/onibus', 'veiculos', 'Ônibus', {'vehicle_type': 'onibus'}),
-            ('caminhoes-onibus/caminhoes', 'veiculos', 'Caminhões', {'vehicle_type': 'caminhao'}),
-            ('caminhoes-onibus/vans', 'veiculos', 'Vans', {'vehicle_type': 'van'}),
-            ('caminhoes-onibus/impl-rod-e-carrocerias', 'veiculos', 'Implementos Rodoviários', {'vehicle_type': 'implemento_rodoviario'}),
+            ('caminhoes-onibus/onibus', 'Ônibus', 'Ônibus'),
+            ('caminhoes-onibus/caminhoes', 'Caminhões', 'Caminhões'),
+            ('caminhoes-onibus/vans', 'Vans', 'Vans'),
+            ('caminhoes-onibus/impl-rod-e-carrocerias', 'Implementos Rodoviários', 'Implementos Rodoviários'),
             
             # VEÍCULOS - CARROS/MOTOS
-            ('carros-motos/carros', 'veiculos', 'Carros', {'vehicle_type': 'carro'}),
-            ('carros-motos/motos', 'veiculos', 'Motos', {'vehicle_type': 'moto'}),
-            ('carros-motos/varias-ferramentas', 'veiculos', 'Veículos Diversos', {'vehicle_type': 'outro'}),
+            ('carros-motos/carros', 'Carros', 'Carros'),
+            ('carros-motos/motos', 'Motos', 'Motos'),
+            ('carros-motos/varias-ferramentas', 'Veículos Diversos', 'Veículos Diversos'),
             
             # VEÍCULOS - EMBARCAÇÕES/AERONAVES
-            ('embarcacoes-aeronaves/embarcacoes-e-navios', 'veiculos', 'Embarcações e Navios', {'vehicle_type': 'barco'}),
-            ('embarcacoes-aeronaves/jet-skis', 'veiculos', 'Jet Skis', {'vehicle_type': 'jetski'}),
-            ('embarcacoes-aeronaves/lanchas-e-barcos', 'veiculos', 'Lanchas e Barcos', {'vehicle_type': 'barco'}),
-            ('embarcacoes-aeronaves/avioes', 'veiculos', 'Aviões', {'vehicle_type': 'aeronave'}),
+            ('embarcacoes-aeronaves/embarcacoes-e-navios', 'Embarcações e Navios', 'Embarcações e Navios'),
+            ('embarcacoes-aeronaves/jet-skis', 'Jet Skis', 'Jet Skis'),
+            ('embarcacoes-aeronaves/lanchas-e-barcos', 'Lanchas e Barcos', 'Lanchas e Barcos'),
+            ('embarcacoes-aeronaves/avioes', 'Aviões', 'Aviões'),
             
             # PARTES E PEÇAS
-            ('caminhoes-onibus/partes-e-pecas-caminhoes-e-onibus', 'partes_pecas', 'Peças Caminhões/Ônibus', {'parts_type': 'caminhoes_onibus'}),
-            ('carros-motos/partes-e-pecas-carros-e-motos', 'partes_pecas', 'Peças Carros/Motos', {'parts_type': 'carros_motos'}),
-            ('embarcacoes-aeronaves/pecas-e-acessorios', 'partes_pecas', 'Peças Embarcações/Aeronaves', {'parts_type': 'embarcacoes_aeronaves'}),
-            ('partes-e-pecas', 'partes_pecas', 'Peças Variadas', {'parts_type': 'variados'}),
+            ('caminhoes-onibus/partes-e-pecas-caminhoes-e-onibus', 'Peças Caminhões/Ônibus', 'Peças Caminhões/Ônibus'),
+            ('carros-motos/partes-e-pecas-carros-e-motos', 'Peças Carros/Motos', 'Peças Carros/Motos'),
+            ('embarcacoes-aeronaves/pecas-e-acessorios', 'Peças Embarcações/Aeronaves', 'Peças Embarcações/Aeronaves'),
+            ('partes-e-pecas', 'Peças Variadas', 'Peças Variadas'),
             
-            # NICHADOS
-            ('cozinhas-e-restaurantes/restaurantes', 'nichados', 'Restaurantes', {'specialized_type': 'restaurante'}),
-            ('cozinhas-e-restaurantes/cozinhas-industriais', 'nichados', 'Cozinhas Industriais', {'specialized_type': 'cozinha_industrial'}),
-            ('oportunidades/negocios', 'nichados', 'Negócios', {'specialized_type': 'negocios'}),
-            ('oportunidades/lazer', 'nichados', 'Lazer', {'specialized_type': 'lazer'}),
-            ('oportunidades/esportes', 'nichados', 'Esportes', {'specialized_type': 'esportes'}),
+            # DIVERSOS
+            ('cozinhas-e-restaurantes/restaurantes', 'Restaurantes', 'Restaurantes'),
+            ('cozinhas-e-restaurantes/cozinhas-industriais', 'Cozinhas Industriais', 'Cozinhas Industriais'),
+            ('oportunidades/negocios', 'Negócios', 'Negócios'),
+            ('oportunidades/lazer', 'Lazer', 'Lazer'),
+            ('oportunidades/esportes', 'Esportes', 'Esportes'),
             
             # ELETRODOMÉSTICOS
-            ('eletrodomesticos/refrigeradores', 'eletrodomesticos', 'Refrigeradores', {'appliance_type': 'refrigerador'}),
-            ('eletrodomesticos/fornos-e-fogoes', 'eletrodomesticos', 'Fornos e Fogões', {'appliance_type': 'fogao_forno'}),
-            ('eletrodomesticos/eletroportateis', 'eletrodomesticos', 'Eletroportáteis', {'appliance_type': 'eletroportatil'}),
-            ('eletrodomesticos/limpeza', 'eletrodomesticos', 'Limpeza', {'appliance_type': 'limpeza'}),
+            ('eletrodomesticos/refrigeradores', 'Refrigeradores', 'Refrigeradores'),
+            ('eletrodomesticos/fornos-e-fogoes', 'Fornos e Fogões', 'Fornos e Fogões'),
+            ('eletrodomesticos/eletroportateis', 'Eletroportáteis', 'Eletroportáteis'),
+            ('eletrodomesticos/limpeza', 'Limpeza', 'Limpeza'),
             
             # IMÓVEIS
-            ('imoveis/imoveis-industriais', 'imoveis', 'Imóveis Industriais', {'property_type': 'galpao_industrial'}),
-            ('imoveis/terrenos-e-lotes', 'imoveis', 'Terrenos e Lotes', {'property_type': 'terreno_lote'}),
-            ('imoveis/imoveis-flutuantes', 'imoveis', 'Imóveis Flutuantes', {'property_type': 'flutuante'}),
-            ('imoveis/imoveis-rurais', 'imoveis', 'Imóveis Rurais', {'property_type': 'rural'}),
-            ('imoveis/imoveis-comerciais', 'imoveis', 'Imóveis Comerciais', {'property_type': 'comercial'}),
-            ('imoveis/imoveis-residenciais', 'imoveis', 'Imóveis Residenciais', {'property_type': 'residencial'}),
+            ('imoveis/imoveis-industriais', 'Imóveis Industriais', 'Imóveis Industriais'),
+            ('imoveis/terrenos-e-lotes', 'Terrenos e Lotes', 'Terrenos e Lotes'),
+            ('imoveis/imoveis-flutuantes', 'Imóveis Flutuantes', 'Imóveis Flutuantes'),
+            ('imoveis/imoveis-rurais', 'Imóveis Rurais', 'Imóveis Rurais'),
+            ('imoveis/imoveis-comerciais', 'Imóveis Comerciais', 'Imóveis Comerciais'),
+            ('imoveis/imoveis-residenciais', 'Imóveis Residenciais', 'Imóveis Residenciais'),
             
             # INDUSTRIAL EQUIPAMENTOS
-            ('industrial-maquinas-equipamentos', 'industrial_equipamentos', 'Industrial e Máquinas', {}),
-            ('movimentacao-transporte', 'industrial_equipamentos', 'Movimentação e Transporte', {}),
-            ('oportunidades/teste', 'industrial_equipamentos', 'Equipamentos Teste', {}),
+            ('industrial-maquinas-equipamentos', 'Industrial e Máquinas', 'Industrial e Máquinas'),
+            ('movimentacao-transporte', 'Movimentação e Transporte', 'Movimentação e Transporte'),
             
             # MÁQUINAS PESADAS E AGRÍCOLAS
-            ('maquinas-pesadas-agricolas', 'maquinas_pesadas_agricolas', 'Máquinas Pesadas e Agrícolas', {}),
+            ('maquinas-pesadas-agricolas', 'Máquinas Pesadas e Agrícolas', 'Máquinas Pesadas e Agrícolas'),
             
             # MATERIAIS CONSTRUÇÃO
-            ('materiais-para-construcao-civil/ferramentas', 'materiais_construcao', 'Ferramentas', {'construction_material_type': 'ferramentas'}),
-            ('materiais-para-construcao-civil/materiais', 'materiais_construcao', 'Materiais', {'construction_material_type': 'materiais'}),
-            ('materiais-para-construcao-civil/eletrica-e-iluminacao', 'materiais_construcao', 'Elétrica e Iluminação', {'construction_material_type': 'eletrica_iluminacao'}),
+            ('materiais-para-construcao-civil/ferramentas', 'Ferramentas', 'Ferramentas'),
+            ('materiais-para-construcao-civil/materiais', 'Materiais', 'Materiais'),
+            ('materiais-para-construcao-civil/eletrica-e-iluminacao', 'Elétrica e Iluminação', 'Elétrica e Iluminação'),
             
             # MÓVEIS E DECORAÇÃO
-            ('moveis-e-decoracao', 'moveis_decoracao', 'Móveis e Decoração', {}),
+            ('moveis-e-decoracao', 'Móveis e Decoração', 'Móveis e Decoração'),
             
             # SUCATAS E RESÍDUOS
-            ('sucatas-materiais-residuos', 'sucatas_residuos', 'Sucatas e Resíduos', {}),
+            ('sucatas-materiais-residuos', 'Sucatas e Resíduos', 'Sucatas e Resíduos'),
             
             # TECNOLOGIA
-            ('tecnologia/informatica', 'tecnologia', 'Informática', {'tech_type': 'informatica'}),
-            ('tecnologia/telefonia', 'tecnologia', 'Telefonia', {'tech_type': 'telefonia'}),
-            ('tecnologia/eletronicos', 'tecnologia', 'Eletrônicos', {'tech_type': 'eletronicos'}),
+            ('tecnologia/informatica', 'Informática', 'Informática'),
+            ('tecnologia/telefonia', 'Telefonia', 'Telefonia'),
+            ('tecnologia/eletronicos', 'Eletrônicos', 'Eletrônicos'),
         ]
         
         self.stats = {
             'total_scraped': 0,
-            'by_table': defaultdict(int),
-            'by_section': {},
+            'by_category': {},
             'duplicates': 0,
+            'with_bids': 0,
         }
         
         self.headers = {
@@ -137,199 +132,150 @@ class SuperbidScraper:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
     
-    def scrape(self) -> dict:
-        """Scrape completo"""
+    def scrape(self) -> List[Dict]:
+        """Scrape completo do Superbid - retorna lista de itens - TODAS as páginas"""
         print("\n" + "="*60)
-        print("🔵 SUPERBID - SCRAPER ATUALIZADO")
+        print("🔵 SUPERBID - SCRAPER")
         print("="*60)
         
-        items_by_table = defaultdict(list)
+        all_items = []
         global_ids = set()
         
-        for url_slug, table, display_name, extra_fields in self.sections:
-            print(f"\n📦 {display_name} → {table}")
+        for url_slug, category, display_name in self.sections:
+            print(f"\n📦 {display_name}")
             
             section_items = self._scrape_section(
-                url_slug, table, display_name, extra_fields, global_ids
+                url_slug, category, display_name, global_ids
             )
             
-            items_by_table[table].extend(section_items)
-            self.stats['by_section'][url_slug] = len(section_items)
-            self.stats['by_table'][table] += len(section_items)
+            all_items.extend(section_items)
+            self.stats['by_category'][category] = len(section_items)
             
-            print(f"✅ {len(section_items)} itens → {table}")
+            print(f"✅ {len(section_items)} itens")
+            
             time.sleep(2)
         
-        self.stats['total_scraped'] = sum(len(items) for items in items_by_table.values())
-        return items_by_table
+        self.stats['total_scraped'] = len(all_items)
+        return all_items
     
-    def _scrape_section(self, url_slug: str, table: str, 
-                       display_name: str, extra_fields: dict, 
-                       global_ids: set) -> List[dict]:
-        """Scrape uma seção específica"""
+    def _scrape_section(self, url_slug: str, category: str,
+                       display_name: str, global_ids: set) -> List[Dict]:
+        """Scrape uma seção específica - TODAS as páginas disponíveis"""
         items = []
         page_num = 1
         page_size = 100
         consecutive_errors = 0
         max_errors = 3
-        max_pages = 100
         
-        while page_num <= max_pages and consecutive_errors < max_errors:
-            print(f"  Pág {page_num}", end='', flush=True)
-            
+        while True:  # ✅ SEM LIMITE! Vai até acabar as páginas
             try:
+                url = f"{self.base_url}{url_slug}"
                 params = {
-                    "urlSeo": f"https://exchange.superbid.net/categorias/{url_slug}",
-                    "locale": "pt_BR",
-                    "orderBy": "score:desc",
-                    "pageNumber": page_num,
-                    "pageSize": page_size,
-                    "portalId": "[2,15]",
-                    "requestOrigin": "marketplace",
-                    "searchType": "openedAll",
-                    "timeZoneId": "America/Sao_Paulo",
+                    'page': page_num,
+                    'pageSize': page_size,
                 }
                 
-                response = self.session.get(
-                    self.base_url,
-                    params=params,
-                    timeout=45
-                )
-                
-                if response.status_code == 404:
-                    print(f" ⚪ Fim")
-                    break
+                response = self.session.get(url, params=params, timeout=30)
                 
                 if response.status_code != 200:
-                    print(f" ⚠️ Status {response.status_code}")
                     consecutive_errors += 1
-                    time.sleep(5)
+                    print(f"    ⚠️ Erro HTTP {response.status_code} na página {page_num}")
+                    if consecutive_errors >= max_errors:
+                        print(f"    ✅ Fim da categoria ({max_errors} erros consecutivos)")
+                        break
                     page_num += 1
                     continue
                 
                 data = response.json()
-                offers = data.get("offers", [])
+                offers = data.get('offers', [])
                 
                 if not offers:
-                    print(f" ⚪ Vazia")
+                    print(f"    ✅ Fim da categoria (sem mais itens)")
                     break
                 
-                novos = 0
-                duplicados = 0
+                consecutive_errors = 0
+                print(f"    📄 Página {page_num}: {len(offers)} ofertas")
                 
-                for offer in offers:
-                    item = self._extract_offer(offer, table, display_name, extra_fields)
+                for offer_data in offers:
+                    item = self._parse_offer(offer_data, category, display_name)
                     
-                    if not item:
-                        continue
-                    
-                    if item['external_id'] in global_ids:
-                        duplicados += 1
+                    if item and item['external_id'] not in global_ids:
+                        items.append(item)
+                        global_ids.add(item['external_id'])
+                        
+                        if item.get('has_bid'):
+                            self.stats['with_bids'] += 1
+                    elif item:
                         self.stats['duplicates'] += 1
-                        continue
-                    
-                    items.append(item)
-                    global_ids.add(item['external_id'])
-                    novos += 1
-                
-                if novos > 0:
-                    print(f" ✅ +{novos}")
-                    consecutive_errors = 0
-                else:
-                    print(f" ⚪ 0 novos (dup: {duplicados})")
-                
-                if len(offers) < page_size:
-                    break
                 
                 page_num += 1
-                time.sleep(random.uniform(2, 5))
                 
-            except requests.exceptions.JSONDecodeError:
-                print(f" ⚠️ Erro JSON")
-                consecutive_errors += 1
-                time.sleep(5)
-                page_num += 1
-            
             except Exception as e:
-                print(f" ❌ Erro: {str(e)[:80]}")
                 consecutive_errors += 1
-                time.sleep(5)
+                print(f"    ⚠️ Erro na página {page_num}: {e}")
+                if consecutive_errors >= max_errors:
+                    print(f"    ✅ Fim da categoria ({max_errors} erros consecutivos)")
+                    break
                 page_num += 1
+                continue
         
         return items
     
-    def _extract_offer(self, offer: dict, table: str, 
-                      display_name: str, extra_fields: dict) -> Optional[dict]:
-        """
-        ✅ EXTRAI DADOS DA API - ESTRUTURA SIMPLIFICADA
-        
-        Campos principais:
-        - has_bid (boolean): total_bids > 0
-        - auction_round: NULL = 1ª praça
-        """
+    def _parse_offer(self, offer: Dict, category: str, display_name: str) -> Optional[Dict]:
+        """Parse de uma oferta - formato superbid_items"""
         try:
-            product = offer.get("product", {})
-            auction = offer.get("auction", {})
-            detail = offer.get("offerDetail", {})
-            seller = offer.get("seller", {})
-            store = offer.get("store", {})
-            
-            # ID externo
-            offer_id = str(offer.get("id"))
+            # IDs básicos
+            offer_id = offer.get('id')
             if not offer_id:
                 return None
             
             external_id = f"superbid_{offer_id}"
             
-            # Título
-            title = (product.get("shortDesc") or "").strip()
-            if not title or len(title) < 3:
-                return None
+            # Product info
+            product = offer.get('product', {})
+            product_id = product.get('productId')
             
-            # Descrição
-            description = offer.get("offerDescription", {}).get("offerDescription", "")
+            # Título e descrição
+            title = product.get('shortDesc') or offer.get('offerDescription', {}).get('offerDescription', 'Sem título')
+            description = product.get('detailedDescription')
             
-            # Valor
-            value = detail.get("currentMinBid") or detail.get("initialBidValue")
-            value_text = detail.get("currentMinBidFormatted") or detail.get("initialBidValueFormatted")
+            # Categoria e subcategoria
+            sub_category = product.get('subCategory', {})
+            sub_category_id = sub_category.get('id')
+            sub_category_desc = sub_category.get('description')
             
-            # ✅ HAS_BID - Simplificado (boolean)
-            total_bids = offer.get("totalBids", 0)
-            has_bid = total_bids > 0
+            category_obj = sub_category.get('category', {})
+            
+            product_type = product.get('productType', {})
+            product_type_id = product_type.get('id')
+            product_type_desc = product_type.get('description')
             
             # Localização
+            location = product.get('location', {})
             city = None
             state = None
+            location_full = location.get('city')
             
-            location = product.get("location", {})
-            location_city = location.get("city", "")
-            
-            if location_city:
-                if ' - ' in location_city:
-                    parts = location_city.split(' - ')
+            if location_full:
+                if ' - ' in location_full:
+                    parts = location_full.split(' - ')
                     city = parts[0].strip()
-                    state = parts[1].strip() if len(parts) > 1 else None
-                elif '/' in location_city:
-                    parts = location_city.split('/')
-                    city = parts[0].strip()
-                    state = parts[1].strip() if len(parts) > 1 else None
+                    state_raw = parts[1].strip()
+                    if len(state_raw) == 2:
+                        state = state_raw.upper()
                 else:
-                    city = location_city.strip()
+                    city = location_full.strip()
             
-            if not city:
-                seller_city = seller.get("city", "") or ""
-                if seller_city:
-                    if '/' in seller_city:
-                        parts = seller_city.split('/')
-                        city = parts[0].strip()
-                        state = parts[1].strip() if len(parts) > 1 else None
-                    elif ' - ' in seller_city:
-                        parts = seller_city.split(' - ')
-                        city = parts[0].strip()
-                        state = parts[1].strip() if len(parts) > 1 else None
-                    else:
-                        city = seller_city.strip()
+            # Se não tem state na location, tenta do seller
+            if not state:
+                seller = offer.get('seller', {})
+                seller_city = seller.get('city')
+                if seller_city and ' - ' in seller_city:
+                    state_raw = seller_city.split(' - ')[-1].strip()
+                    if len(state_raw) == 2:
+                        state = state_raw.upper()
             
+            # Se ainda não tem state, tenta converter nome completo
             if not state and location.get("state"):
                 state_full = location.get("state", "")
                 state_map = {
@@ -343,145 +289,371 @@ class SuperbidScraper:
                 }
                 state = state_map.get(state_full, state_full)
             
-            # Link
-            link = f"https://exchange.superbid.net/oferta/{offer_id}"
+            location_geo = location.get('locationGeo', {})
+            location_lat = location_geo.get('lat')
+            location_lon = location_geo.get('lon')
             
-            # Data do leilão
-            auction_date = None
-            end_date_str = offer.get("endDate")
-            if end_date_str:
+            # Auction info
+            auction = offer.get('auction', {})
+            auction_id = auction.get('id')
+            auction_name = auction.get('desc')
+            auction_status_id = auction.get('statusId')
+            auction_modality = auction.get('modalityDesc')
+            
+            # Datas do leilão
+            auction_begin_date = self._parse_datetime(auction.get('beginDate'))
+            auction_end_date = self._parse_datetime(auction.get('endDate'))
+            auction_max_enddate = self._parse_datetime(auction.get('maxEnddateOffer'))
+            
+            # Leiloeiro
+            auctioneer_name = auction.get('auctioneer')
+            auctioneer_registry = auction.get('registry')
+            
+            # Endereço do leilão
+            auction_address = auction.get('address')
+            
+            # Informações judiciais
+            judicial_praca = auction.get('judicialPraca')
+            judicial_praca_desc = auction.get('judicialPracaDescription')
+            judicial_control_number = auction.get('judicialControlNumber')
+            
+            # Store info
+            store = offer.get('store', {})
+            store_id = store.get('id')
+            store_name = store.get('name')
+            store_highlight = store.get('highlight')
+            store_logo_url = store.get('logoUri')
+            
+            # Manager
+            manager = offer.get('manager', {})
+            manager_id = manager.get('id')
+            manager_name = manager.get('name')
+            
+            # Valores
+            price = offer.get('price')
+            price_formatted = offer.get('priceFormatted')
+            
+            offer_detail = offer.get('offerDetail', {})
+            initial_bid_value = offer_detail.get('initialBidValue')
+            current_min_bid = offer_detail.get('currentMinBid')
+            current_max_bid = offer_detail.get('currentMaxBid')
+            reserved_price = offer_detail.get('reservedPrice')
+            
+            bid_increment_obj = offer.get('currentBidIncrement', {})
+            bid_increment = bid_increment_obj.get('currentBidIncrement')
+            
+            # Informações de lances
+            has_bids = offer.get('hasBids', False)
+            has_received_bids_or_proposals = offer.get('hasReceivedBidsOrProposals', False)
+            total_bidders = offer.get('totalBidders', 0)
+            total_bids = offer.get('totalBids', 0)
+            total_received_proposals = offer.get('totalReceivedProposals', 0)
+            
+            # Winner info
+            winner_bid = offer.get('winnerBid', {})
+            current_winner_id = winner_bid.get('currentWinner')
+            current_winner_login = winner_bid.get('currentWinnerLogin')
+            
+            # Dados de veículo (se aplicável)
+            brand = None
+            model = None
+            year_manufacture = None
+            year_model = None
+            plate = None
+            color = None
+            fuel = None
+            transmission = None
+            km = None
+            vehicle_restrictions = None
+            vehicle_owner = None
+            vehicle_debts = None
+            
+            # Tenta extrair dos templates
+            template = product.get('template', {})
+            groups = template.get('groups', [])
+            for group in groups:
+                properties = group.get('properties', [])
+                for prop in properties:
+                    prop_id = prop.get('id', '').lower()
+                    value = prop.get('value')
+                    
+                    if prop_id == 'anofabricacao' and value:
+                        try:
+                            year_manufacture = int(value)
+                        except:
+                            pass
+                    elif prop_id == 'anomodelo' and value:
+                        try:
+                            year_model = int(value)
+                        except:
+                            pass
+            
+            # Tenta extrair do productCustomJson
+            product_custom_json = product.get('productCustomJson')
+            if product_custom_json:
                 try:
-                    dt = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M:%S')
-                    auction_date = dt.strftime('%Y-%m-%d %H:%M:%S-03')
+                    custom_data = json.loads(product_custom_json)
+                    vehicle_restrictions = custom_data.get('vehicleRestrictions')
+                    vehicle_owner = custom_data.get('vehicleOwner')
+                    vehicle_debts = custom_data.get('vehicleDebts')
                 except:
                     pass
             
-            # ✅ ITEM SIMPLIFICADO
-            item = {
-                'source': 'superbid',
-                'external_id': external_id,
-                'title': title,
-                'description': description,
-                'value': value,
-                'value_text': value_text,
-                'city': city,
-                'state': state,
-                'link': link,
-                'target_table': table,
-                
-                'auction_date': auction_date,
-                'auction_type': auction.get("modalityDesc"),
-                'auction_name': auction.get("desc"),
-                'store_name': store.get("name"),
-                'lot_number': offer.get("lotNumber"),
-                
-                # ✅ SIMPLIFICADO: apenas has_bid
-                'has_bid': has_bid,
-                
-                # auction_round: NULL = 1ª praça (SuperBid não fornece info de praça)
-                'auction_round': None,
-                
-                'metadata': {
-                    'secao_site': display_name,
-                    'leiloeiro': auction.get("auctioneer"),
-                    'vendedor': seller.get("name"),
-                }
-            }
+            # Product ref
+            product_your_ref = product.get('productYourRef')
             
-            # Adiciona campos extras
-            if extra_fields:
-                item.update(extra_fields)
+            # Imagens
+            gallery_json = product.get('galleryJson', [])
+            image_url = None
+            if gallery_json and len(gallery_json) > 0:
+                image_url = gallery_json[0].get('link')
+            
+            photo_count = product.get('photoCount', 0)
+            video_url_count = product.get('videoUrlCount', 0)
+            
+            # Status
+            offer_status = offer.get('offerStatus', {})
+            status_code = offer_status.get('statusCode')
+            is_removed = offer_status.get('removed', False)
+            is_stabbed = offer_status.get('stabbed', False)
+            is_subjudice = offer_status.get('subjudice', False)
+            is_sold = offer_status.get('sold', False)
+            is_reserved = offer_status.get('reserved', False)
+            is_closed = offer_status.get('closed', False)
+            
+            offer_status_id = offer.get('statusId')
+            offer_type_id = offer.get('offerTypeId')
+            
+            # Group offer
+            group_offer = offer.get('groupOffer', {})
+            group_offer_id = group_offer.get('id')
+            
+            # Quantidades
+            quantity_in_lot = offer.get('quantityInLot', 1)
+            quantity_sold = offer.get('quantitySold', 0)
+            quantity_reserved = offer.get('quantityReserved', 0)
+            
+            # System metric
+            system_metric = offer.get('systemMetric')
+            
+            # Visitas
+            visits = offer.get('visits', 0)
+            
+            # Seller
+            seller = offer.get('seller', {})
+            seller_id = seller.get('id')
+            seller_name = seller.get('name')
+            seller_city = seller.get('city')
+            seller_phone = seller.get('phone')
+            seller_company = seller.get('company')
+            
+            # Commercial conditions
+            commercial_condition = offer.get('commercialCondition', {})
+            commission_percent = commercial_condition.get('auctioneerCommissionPercent')
+            allows_credit_card = commercial_condition.get('allowsCreditCard', False)
+            allows_credit_card_total = commercial_condition.get('allowCreditCardTotalValue', False)
+            transaction_limit = commercial_condition.get('transactionLimit')
+            max_installments = commercial_condition.get('maxInstallments')
+            
+            # Datas
+            end_date = self._parse_datetime(offer.get('endDate'))
+            end_date_time = offer.get('endDateTime')
+            create_at = self._parse_datetime(offer.get('createAt'))
+            update_at = self._parse_datetime(offer.get('updateAt'))
+            published_at = self._parse_datetime(offer.get('publishedAt'))
+            indexation_date = self._parse_datetime(offer.get('indexationDate'))
+            
+            # Link
+            link = f"https://exchange.superbid.net/oferta/{offer_id}"
+            
+            # Lot number
+            lot_number = offer.get('lotNumber')
             
             # Filtros
-            store_name = str(store.get("name", "")).lower()
-            if 'demo' in store_name or 'test' in store_name:
+            if 'demo' in store_name.lower() or 'test' in store_name.lower():
                 return None
             
-            if value and value < 1:
+            if price and price < 1:
                 return None
+            
+            # Monta o item com todos os campos
+            item = {
+                'external_id': external_id,
+                'offer_id': offer_id,
+                'product_id': product_id,
+                'lot_number': lot_number,
+                'auction_id': auction_id,
+                'group_offer_id': group_offer_id,
+                'category': category,
+                'product_type_id': product_type_id,
+                'product_type_desc': product_type_desc,
+                'sub_category_id': sub_category_id,
+                'sub_category_desc': sub_category_desc,
+                'title': title,
+                'description': description,
+                'city': city,
+                'state': state,
+                'location_full': location_full,
+                'location_lat': location_lat,
+                'location_lon': location_lon,
+                'auction_name': auction_name,
+                'auction_status_id': auction_status_id,
+                'auction_modality': auction_modality,
+                'auction_begin_date': auction_begin_date,
+                'auction_end_date': auction_end_date,
+                'auction_max_enddate': auction_max_enddate,
+                'auctioneer_name': auctioneer_name,
+                'auctioneer_registry': auctioneer_registry,
+                'auction_address': auction_address,
+                'judicial_praca': judicial_praca,
+                'judicial_praca_desc': judicial_praca_desc,
+                'judicial_control_number': judicial_control_number,
+                'store_id': store_id,
+                'store_name': store_name,
+                'store_highlight': store_highlight,
+                'store_logo_url': store_logo_url,
+                'manager_id': manager_id,
+                'manager_name': manager_name,
+                'price': price,
+                'price_formatted': price_formatted,
+                'initial_bid_value': initial_bid_value,
+                'current_min_bid': current_min_bid,
+                'current_max_bid': current_max_bid,
+                'reserved_price': reserved_price,
+                'bid_increment': bid_increment,
+                'has_bids': has_bids,
+                'has_received_bids_or_proposals': has_received_bids_or_proposals,
+                'total_bidders': total_bidders,
+                'total_bids': total_bids,
+                'total_received_proposals': total_received_proposals,
+                'current_winner_id': current_winner_id,
+                'current_winner_login': current_winner_login,
+                'brand': brand,
+                'model': model,
+                'year_manufacture': year_manufacture,
+                'year_model': year_model,
+                'plate': plate,
+                'color': color,
+                'fuel': fuel,
+                'transmission': transmission,
+                'km': km,
+                'vehicle_restrictions': vehicle_restrictions,
+                'vehicle_owner': vehicle_owner,
+                'vehicle_debts': vehicle_debts,
+                'product_your_ref': product_your_ref,
+                'image_url': image_url,
+                'photo_count': photo_count,
+                'video_url_count': video_url_count,
+                'offer_status_id': offer_status_id,
+                'offer_type_id': offer_type_id,
+                'status_code': status_code,
+                'is_removed': is_removed,
+                'is_stabbed': is_stabbed,
+                'is_subjudice': is_subjudice,
+                'is_sold': is_sold,
+                'is_reserved': is_reserved,
+                'is_closed': is_closed,
+                'is_highlight': False,
+                'is_favorite': offer.get('isFavorite', False),
+                'quantity_in_lot': quantity_in_lot,
+                'quantity_sold': quantity_sold,
+                'quantity_reserved': quantity_reserved,
+                'system_metric': system_metric,
+                'visits': visits,
+                'seller_id': seller_id,
+                'seller_name': seller_name,
+                'seller_city': seller_city,
+                'seller_phone': seller_phone,
+                'seller_company': seller_company,
+                'commission_percent': commission_percent,
+                'allows_credit_card': allows_credit_card,
+                'allows_credit_card_total': allows_credit_card_total,
+                'transaction_limit': transaction_limit,
+                'max_installments': max_installments,
+                'end_date': end_date,
+                'end_date_time': end_date_time,
+                'create_at': create_at,
+                'update_at': update_at,
+                'published_at': published_at,
+                'indexation_date': indexation_date,
+                'link': link,
+                'source': 'superbid',
+                'metadata': {
+                    'secao_site': display_name,
+                },
+                'is_active': True,
+                'has_bid': has_bids,
+            }
             
             return item
             
         except Exception as e:
+            return None
+    
+    def _parse_datetime(self, date_str: Optional[str]) -> Optional[str]:
+        """Converte datetime para formato PostgreSQL"""
+        if not date_str:
+            return None
+        try:
+            dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+            return dt.strftime('%Y-%m-%d %H:%M:%S-03')
+        except:
             return None
 
 
 def main():
     """Execução principal"""
     print("\n" + "="*70)
-    print("🚀 SUPERBID - SCRAPER ATUALIZADO")
+    print("🚀 SUPERBID - SCRAPER")
     print("="*70)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
     
     start_time = time.time()
     
-    # FASE 1: SCRAPE
-    print("\n🔥 FASE 1: COLETANDO DADOS")
+    # Scrape
     scraper = SuperbidScraper()
-    items_by_table = scraper.scrape()
+    items = scraper.scrape()
     
-    total_items = sum(len(items) for items in items_by_table.values())
-    
-    print(f"\n✅ Total coletado: {total_items} itens")
+    print(f"\n✅ Total coletado: {len(items)} itens")
+    print(f"🔥 Itens com lances: {scraper.stats['with_bids']}")
     print(f"🔄 Duplicatas filtradas: {scraper.stats['duplicates']}")
     
-    if not total_items:
+    if not items:
         print("⚠️ Nenhum item coletado - encerrando")
         return
     
-    # FASE 2: NORMALIZAÇÃO
-    print("\n✨ FASE 2: NORMALIZANDO DADOS")
+    # Salva JSON - ✅ CAMINHO CORRIGIDO
+    output_dir = Path(__file__).parent / 'data' / 'normalized'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    json_file = output_dir / f'superbid_{timestamp}.json'
     
-    normalized_by_table = {}
+    with open(json_file, 'w', encoding='utf-8') as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+    print(f"💾 JSON salvo: {json_file}")
     
-    for table, items in items_by_table.items():
-        if not items:
-            continue
-        
-        try:
-            normalized = normalize_items(items)
-            normalized_by_table[table] = normalized
-            print(f"  ✅ {table}: {len(normalized)} itens normalizados")
-        except Exception as e:
-            print(f"  ⚠️ Erro em {table}: {e}")
-            normalized_by_table[table] = items
-    
-    # FASE 3: INSERT NO SUPABASE
-    print("\n📤 FASE 3: INSERINDO NO SUPABASE")
-    
+    # Importa e usa o cliente Supabase - ✅ IMPORT CORRIGIDO
     try:
-        supabase = SupabaseClient()
+        from supabase_client import SupabaseSuperbid
+        
+        print("\n📤 INSERINDO NO SUPABASE")
+        supabase = SupabaseSuperbid()
         
         if not supabase.test():
             print("⚠️ Erro na conexão com Supabase - pulando insert")
         else:
-            total_inserted = 0
-            total_updated = 0
+            stats = supabase.upsert(items)
             
-            for table, items in normalized_by_table.items():
-                if not items:
-                    continue
-                
-                print(f"\n  📤 Tabela '{table}': {len(items)} itens")
-                stats = supabase.upsert(table, items)
-                
-                print(f"    ✅ Inseridos: {stats['inserted']}")
-                print(f"    🔄 Atualizados: {stats['updated']}")
-                if stats['errors'] > 0:
-                    print(f"    ⚠️ Erros: {stats['errors']}")
-                
-                total_inserted += stats['inserted']
-                total_updated += stats['updated']
-            
-            print(f"\n  📈 TOTAL:")
-            print(f"    ✅ Inseridos: {total_inserted}")
-            print(f"    🔄 Atualizados: {total_updated}")
+            print(f"\n  📈 RESULTADO:")
+            print(f"    ✅ Inseridos: {stats['inserted']}")
+            print(f"    🔄 Atualizados: {stats['updated']}")
+            if stats['errors'] > 0:
+                print(f"    ⚠️ Erros: {stats['errors']}")
     
     except Exception as e:
         print(f"⚠️ Erro no Supabase: {e}")
     
-    # ESTATÍSTICAS FINAIS
     elapsed = time.time() - start_time
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
@@ -489,11 +661,11 @@ def main():
     print("\n" + "="*70)
     print("📊 ESTATÍSTICAS FINAIS")
     print("="*70)
-    print(f"🔵 Superbid - Scraper Atualizado:")
-    print(f"\n  Por Tabela:")
-    for table, count in sorted(scraper.stats['by_table'].items()):
-        print(f"    • {table}: {count} itens")
+    print(f"\n  Por Categoria:")
+    for category, count in sorted(scraper.stats['by_category'].items()):
+        print(f"    • {category}: {count} itens")
     print(f"\n  • Total coletado: {scraper.stats['total_scraped']}")
+    print(f"  • Com lances: {scraper.stats['with_bids']}")
     print(f"  • Duplicatas: {scraper.stats['duplicates']}")
     print(f"\n⏱️ Duração: {minutes}min {seconds}s")
     print(f"✅ Concluído: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
