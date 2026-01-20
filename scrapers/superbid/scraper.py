@@ -4,7 +4,7 @@
 SUPERBID SCRAPER - OTIMIZADO PARA ML
 ✅ Passive listening completo
 ✅ 18 categorias principais
-✅ Estrutura enxuta focada em features para ML
+✅ Upload automático para Supabase
 """
 
 import sys
@@ -14,6 +14,12 @@ import requests
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
+
+# Importa o cliente Supabase (da pasta pai)
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from supabase_client import SupabaseSuperbid
 
 
 class SuperbidScraper:
@@ -199,7 +205,7 @@ class SuperbidScraper:
             return None
     
     def save(self, items: List[Dict], output_dir: Path = None) -> Path:
-        """Salva dados coletados"""
+        """Salva dados coletados (backup local)"""
         if output_dir is None:
             output_dir = Path(__file__).parent / 'data'
         
@@ -232,15 +238,18 @@ class SuperbidScraper:
 
 
 def main():
-    """Execução principal"""
+    """Execução principal - Scrape + Upload"""
     print("\n" + "="*80)
-    print("🚀 SUPERBID - SCRAPER")
+    print("🚀 SUPERBID - SCRAPER + UPLOAD")
     print("="*80)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*80)
     
     start_time = time.time()
     
+    # ========================================
+    # ETAPA 1: SCRAPING
+    # ========================================
     scraper = SuperbidScraper()
     items = scraper.scrape()
     
@@ -248,11 +257,39 @@ def main():
         print("\n⚠️  Nenhum item coletado")
         return 1
     
+    # Salva backup local
     json_file = scraper.save(items)
-    print(f"\n💾 Salvo: {json_file}")
+    print(f"\n💾 Backup local: {json_file}")
     
     scraper.print_stats()
     
+    # ========================================
+    # ETAPA 2: UPLOAD SUPABASE
+    # ========================================
+    print("\n" + "="*80)
+    print("🔵 UPLOAD PARA SUPABASE")
+    print("="*80)
+    
+    try:
+        client = SupabaseSuperbid()
+        stats = client.upsert(items)
+        
+        print("\n" + "="*80)
+        print("📊 RESULTADO DO UPLOAD")
+        print("="*80)
+        print(f"   ✅ Inseridos: {stats['inserted']}")
+        print(f"   🔄 Atualizados: {stats['updated']}")
+        print(f"   ❌ Erros: {stats['errors']}")
+        print("="*80)
+        
+    except Exception as e:
+        print(f"\n❌ Erro no upload Supabase: {str(e)}")
+        print("⚠️  Dados foram salvos localmente em:", json_file)
+        return 1
+    
+    # ========================================
+    # RESUMO FINAL
+    # ========================================
     elapsed = time.time() - start_time
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)

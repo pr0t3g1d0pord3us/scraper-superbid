@@ -10,7 +10,7 @@ on:
 
 jobs:
   superbid-scraper:
-    name: 🔵 Superbid - Scrape Completo
+    name: 🔵 Superbid - Scrape + Upload
     runs-on: ubuntu-latest
     timeout-minutes: 240
     
@@ -31,17 +31,17 @@ jobs:
         run: |
           python -c "import requests; print('✅ Requests OK')"
       
-      - name: 🔵 Executar scraper Superbid
+      - name: 🔵 Executar scraper Superbid + Upload
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           echo "========================================"
-          echo "🔵 SUPERBID - SCRAPER COMPLETO"
+          echo "🔵 SUPERBID - SCRAPER + UPLOAD"
           echo "========================================"
           echo "📅 Início: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo "🇧🇷 Brasil: $(TZ='America/Sao_Paulo' date '+%Y-%m-%d %H:%M:%S BRT')"
-          echo "📄 Modo: TODAS as páginas disponíveis"
+          echo "📄 Modo: TODAS as páginas + Upload Supabase"
           echo "========================================"
           
           cd scrapers/superbid
@@ -50,12 +50,12 @@ jobs:
           echo ""
           echo "✅ Concluído: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
       
-      - name: 💾 Upload JSON (debug)
+      - name: 💾 Upload JSON (backup)
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: superbid-data-${{ github.run_number }}
-          path: scrapers/superbid/data/normalized/superbid_*.json
+          path: scrapers/superbid/data/superbid_*.json
           retention-days: 3
       
       - name: 📊 Gerar resumo
@@ -68,9 +68,9 @@ jobs:
           echo "**Horário Brasil:** $(TZ='America/Sao_Paulo' date '+%Y-%m-%d %H:%M')" >> $GITHUB_STEP_SUMMARY
           echo "**Run #:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
           
-          if [ -f scrapers/superbid/data/normalized/superbid_*.json ]; then
+          if [ -f scrapers/superbid/data/superbid_*.json ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 📊 Dados Coletados" >> $GITHUB_STEP_SUMMARY
-            ITEM_COUNT=$(cat scrapers/superbid/data/normalized/superbid_*.json | grep -c '"external_id"' || echo "0")
+            ITEM_COUNT=$(cat scrapers/superbid/data/superbid_*.json | grep -c '"external_id"' || echo "0")
             echo "- **Total de itens:** $ITEM_COUNT" >> $GITHUB_STEP_SUMMARY
           fi
