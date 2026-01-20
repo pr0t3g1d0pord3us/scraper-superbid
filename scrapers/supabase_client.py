@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPABASE CLIENT - SUPERBID_ITEMS
-✅ Cliente específico para tabela superbid_items
-✅ Suporta todos os campos complexos da tabela
-✅ Validação de dados conforme schema
+SUPABASE CLIENT - SUPERBID (SCHEMA REAL)
+✅ Mapeamento completo para schema existente
+✅ ~100 campos + JSONBs (auction_address, seller_phone, seller_company)
+✅ Compatível com triggers: extract_city_state_superbid, update_updated_at_column
 """
 
 import os
 import time
 import requests
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 
 class SupabaseSuperbid:
-    """Cliente Supabase para tabela superbid_items"""
+    """Cliente Supabase para schema real superbid_items"""
     
     def __init__(self):
         self.url = os.getenv('SUPABASE_URL')
@@ -40,23 +40,29 @@ class SupabaseSuperbid:
         self.session.headers.update(self.headers)
     
     def upsert(self, items: List[Dict]) -> Dict:
-        """Upsert de itens na tabela superbid_items"""
+        """Upsert de itens na tabela"""
         if not items:
             return {'inserted': 0, 'updated': 0, 'errors': 0}
         
-        # Prepara itens
+        print(f"\n📤 Preparando {len(items)} itens para inserção...")
+        
         prepared = []
+        errors = 0
         for item in items:
             try:
                 db_item = self._prepare_item(item)
                 if db_item:
                     prepared.append(db_item)
             except Exception as e:
-                print(f"  ⚠️ Erro ao preparar item: {e}")
+                errors += 1
+                if errors <= 5:  # Mostra só primeiros 5 erros
+                    print(f"  ⚠️  Erro ao preparar: {str(e)[:100]}")
         
         if not prepared:
-            print("  ⚠️ Nenhum item válido para inserir")
-            return {'inserted': 0, 'updated': 0, 'errors': 0}
+            print("  ⚠️  Nenhum item válido para inserir")
+            return {'inserted': 0, 'updated': 0, 'errors': errors}
+        
+        print(f"✅ {len(prepared)} itens preparados ({errors} erros)")
         
         # Insere em batches
         stats = {'inserted': 0, 'updated': 0, 'errors': 0}
@@ -74,17 +80,18 @@ class SupabaseSuperbid:
                 
                 if r.status_code in (200, 201):
                     stats['inserted'] += len(batch)
-                    print(f"  ✅ Batch {batch_num}/{total_batches}: {len(batch)} itens")
+                    print(f"  ✅ Batch {batch_num}/{total_batches}: {len(batch)} itens inseridos")
                 elif r.status_code == 409:
                     stats['updated'] += len(batch)
                     print(f"  🔄 Batch {batch_num}/{total_batches}: {len(batch)} atualizados")
                 else:
-                    error_msg = r.text[:200] if r.text else 'Sem detalhes'
-                    print(f"  ❌ Batch {batch_num}: HTTP {r.status_code} - {error_msg}")
+                    error_detail = r.text[:300] if r.text else 'Sem detalhes'
+                    print(f"  ❌ Batch {batch_num}: HTTP {r.status_code}")
+                    print(f"     {error_detail}")
                     stats['errors'] += len(batch)
             
             except Exception as e:
-                print(f"  ❌ Batch {batch_num}: {e}")
+                print(f"  ❌ Batch {batch_num}: {str(e)[:100]}")
                 stats['errors'] += len(batch)
             
             if batch_num < total_batches:
@@ -93,277 +100,459 @@ class SupabaseSuperbid:
         return stats
     
     def _prepare_item(self, item: Dict) -> Optional[Dict]:
-        """Prepara item para inserção validando campos"""
+        """Extrai TODOS os campos do raw_data para schema real"""
         external_id = item.get('external_id')
         if not external_id:
             return None
         
-        # Valida state
-        state = item.get('state')
-        if state:
-            state = str(state).strip().upper()
-            if len(state) != 2:
-                state = None
+        raw = item.get('raw_data', {})
         
-        # Converte valores numéricos
-        def safe_float(value):
-            if value is None:
+        # ==========================================
+        # HELPERS
+        # ==========================================
+        def get(path: str, default=None) -> Any:
+            """Extrai valor usando dot notation"""
+            keys = path.split('.')
+            value = raw
+            for key in keys:
+                if isinstance(value, dict):
+                    value = value.get(key)
+                else:
+                    return default
+                if value is None:
+                    return default
+            return value
+        
+        def safe_int(val):
+            if val is None or val == '':
                 return None
             try:
-                return float(value)
+                return int(val)
             except:
                 return None
         
-        def safe_int(value):
-            if value is None:
+        def safe_float(val):
+            if val is None or val == '':
                 return None
             try:
-                return int(value)
+                return float(val)
             except:
                 return None
         
-        def safe_bool(value):
-            if value is None:
+        def safe_bool(val):
+            if val is None:
                 return False
-            if isinstance(value, bool):
-                return value
-            return str(value).lower() in ('true', '1', 'yes', 'sim')
+            if isinstance(val, bool):
+                return val
+            return str(val).lower() in ('true', '1', 'yes', 'sim')
         
-        # Processa datas
-        def safe_datetime(value):
-            if not value:
+        def safe_str(val):
+            if val is None or val == '':
                 return None
-            if isinstance(value, str):
-                try:
-                    value = value.replace('Z', '+00:00')
-                    dt = datetime.fromisoformat(value)
-                    return dt.isoformat()
-                except:
-                    return None
-            return None
+            return str(val)
         
-        # Processa metadata
-        metadata = item.get('metadata', {})
-        if not isinstance(metadata, dict):
-            metadata = {}
+        def safe_datetime(val):
+            if not val:
+                return None
+            try:
+                dt_str = str(val).replace('Z', '+00:00')
+                return datetime.fromisoformat(dt_str).isoformat()
+            except:
+                return None
         
-        # Processa JSONs
-        seller_phone = item.get('seller_phone')
-        if seller_phone and not isinstance(seller_phone, list):
-            seller_phone = None
+        # ==========================================
+        # EXTRAÇÃO DE CAMPOS
+        # ==========================================
         
-        seller_company = item.get('seller_company')
-        if seller_company and not isinstance(seller_company, list):
-            seller_company = None
+        # IDs (obrigatórios e opcionais)
+        offer_id = safe_int(get('id'))
+        if not offer_id:
+            return None  # offer_id é NOT NULL
         
-        auction_address = item.get('auction_address')
-        if auction_address and not isinstance(auction_address, dict):
+        product_id = safe_int(get('product.productId'))
+        auction_id = safe_int(get('auction.id'))
+        lot_number = safe_int(get('lotNumber'))
+        group_offer_id = safe_int(get('groupOffer.id'))
+        
+        # Categoria e Tipo
+        category = safe_str(get('product.subCategory.category.description'))
+        product_type_id = safe_int(get('product.productType.id'))
+        product_type_desc = safe_str(get('product.productType.description'))
+        sub_category_id = safe_int(get('product.subCategory.id'))
+        sub_category_desc = safe_str(get('product.subCategory.description'))
+        
+        # Básico
+        title = safe_str(get('product.shortDesc', 'Sem Título'))
+        if not title:
+            title = 'Sem Título'
+        
+        description = safe_str(get('product.detailedDescription'))
+        
+        # Localização
+        location_city = safe_str(get('product.location.city'))
+        location_state = safe_str(get('product.location.state'))
+        location_full = location_city
+        
+        # Monta location_full (usado pelo trigger extract_city_state_superbid)
+        if location_city and location_state:
+            location_full = f"{location_city} - {location_state}"
+        
+        # State validado (2 caracteres uppercase)
+        state = None
+        if location_state:
+            state_str = str(location_state).strip().upper()
+            if len(state_str) == 2:
+                state = state_str
+        
+        # Coordenadas
+        location_lat = safe_float(get('product.location.locationGeo.lat'))
+        location_lon = safe_float(get('product.location.locationGeo.lon'))
+        
+        # Auction
+        auction_name = safe_str(get('auction.desc'))
+        auction_status_id = safe_int(get('auction.statusId'))
+        auction_modality = safe_str(get('auction.modalityDesc'))
+        auction_begin_date = safe_datetime(get('auction.beginDate'))
+        auction_end_date = safe_datetime(get('auction.endDate'))
+        auction_max_enddate = safe_datetime(get('auction.maxEnddateOffer'))
+        
+        # Auctioneer
+        auctioneer_name = safe_str(get('auction.auctioneer'))
+        auctioneer_registry = safe_str(get('auction.registry'))
+        
+        # Auction Address (JSONB)
+        auction_address = get('auction.address')
+        if not isinstance(auction_address, dict):
             auction_address = None
         
-        # Monta item com todos os campos
-        data = {
-            'external_id': str(external_id),
-            'offer_id': safe_int(item.get('offer_id')),
-            'product_id': safe_int(item.get('product_id')),
-            'lot_number': safe_int(item.get('lot_number')),
-            'auction_id': safe_int(item.get('auction_id')),
-            'group_offer_id': safe_int(item.get('group_offer_id')),
-            'category': str(item.get('category')) if item.get('category') else None,
-            'product_type_id': safe_int(item.get('product_type_id')),
-            'product_type_desc': str(item.get('product_type_desc')) if item.get('product_type_desc') else None,
-            'sub_category_id': safe_int(item.get('sub_category_id')),
-            'sub_category_desc': str(item.get('sub_category_desc')) if item.get('sub_category_desc') else None,
-            'title': str(item.get('title', 'Sem Título')),
-            'description': str(item.get('description')) if item.get('description') else None,
-            'city': str(item.get('city')) if item.get('city') else None,
-            'state': state,
-            'location_full': str(item.get('location_full')) if item.get('location_full') else None,
-            'location_lat': safe_float(item.get('location_lat')),
-            'location_lon': safe_float(item.get('location_lon')),
-            'auction_name': str(item.get('auction_name')) if item.get('auction_name') else None,
-            'auction_status_id': safe_int(item.get('auction_status_id')),
-            'auction_modality': str(item.get('auction_modality')) if item.get('auction_modality') else None,
-            'auction_begin_date': safe_datetime(item.get('auction_begin_date')),
-            'auction_end_date': safe_datetime(item.get('auction_end_date')),
-            'auction_max_enddate': safe_datetime(item.get('auction_max_enddate')),
-            'auctioneer_name': str(item.get('auctioneer_name')) if item.get('auctioneer_name') else None,
-            'auctioneer_registry': str(item.get('auctioneer_registry')) if item.get('auctioneer_registry') else None,
-            'auction_address': auction_address,
-            'judicial_praca': safe_int(item.get('judicial_praca')),
-            'judicial_praca_desc': str(item.get('judicial_praca_desc')) if item.get('judicial_praca_desc') else None,
-            'judicial_control_number': str(item.get('judicial_control_number')) if item.get('judicial_control_number') else None,
-            'store_id': safe_int(item.get('store_id')),
-            'store_name': str(item.get('store_name')) if item.get('store_name') else None,
-            'store_highlight': safe_bool(item.get('store_highlight')),
-            'store_logo_url': str(item.get('store_logo_url')) if item.get('store_logo_url') else None,
-            'manager_id': safe_int(item.get('manager_id')),
-            'manager_name': str(item.get('manager_name')) if item.get('manager_name') else None,
-            'price': safe_float(item.get('price')),
-            'price_formatted': str(item.get('price_formatted')) if item.get('price_formatted') else None,
-            'initial_bid_value': safe_float(item.get('initial_bid_value')),
-            'current_min_bid': safe_float(item.get('current_min_bid')),
-            'current_max_bid': safe_float(item.get('current_max_bid')),
-            'reserved_price': safe_float(item.get('reserved_price')),
-            'bid_increment': safe_float(item.get('bid_increment')),
-            'has_bids': safe_bool(item.get('has_bids')),
-            'has_received_bids_or_proposals': safe_bool(item.get('has_received_bids_or_proposals')),
-            'total_bidders': safe_int(item.get('total_bidders')) or 0,
-            'total_bids': safe_int(item.get('total_bids')) or 0,
-            'total_received_proposals': safe_int(item.get('total_received_proposals')) or 0,
-            'current_winner_id': safe_int(item.get('current_winner_id')),
-            'current_winner_login': str(item.get('current_winner_login')) if item.get('current_winner_login') else None,
-            'brand': str(item.get('brand')) if item.get('brand') else None,
-            'model': str(item.get('model')) if item.get('model') else None,
-            'year_manufacture': safe_int(item.get('year_manufacture')),
-            'year_model': safe_int(item.get('year_model')),
-            'plate': str(item.get('plate')) if item.get('plate') else None,
-            'color': str(item.get('color')) if item.get('color') else None,
-            'fuel': str(item.get('fuel')) if item.get('fuel') else None,
-            'transmission': str(item.get('transmission')) if item.get('transmission') else None,
-            'km': safe_int(item.get('km')),
-            'vehicle_restrictions': str(item.get('vehicle_restrictions')) if item.get('vehicle_restrictions') else None,
-            'vehicle_owner': str(item.get('vehicle_owner')) if item.get('vehicle_owner') else None,
-            'vehicle_debts': str(item.get('vehicle_debts')) if item.get('vehicle_debts') else None,
-            'product_your_ref': str(item.get('product_your_ref')) if item.get('product_your_ref') else None,
-            'image_url': str(item.get('image_url')) if item.get('image_url') else None,
-            'photo_count': safe_int(item.get('photo_count')) or 0,
-            'video_url_count': safe_int(item.get('video_url_count')) or 0,
-            'offer_status_id': safe_int(item.get('offer_status_id')),
-            'offer_type_id': safe_int(item.get('offer_type_id')),
-            'status_code': safe_int(item.get('status_code')),
-            'is_removed': safe_bool(item.get('is_removed')),
-            'is_stabbed': safe_bool(item.get('is_stabbed')),
-            'is_subjudice': safe_bool(item.get('is_subjudice')),
-            'is_sold': safe_bool(item.get('is_sold')),
-            'is_reserved': safe_bool(item.get('is_reserved')),
-            'is_closed': safe_bool(item.get('is_closed')),
-            'is_highlight': safe_bool(item.get('is_highlight')),
-            'is_favorite': safe_bool(item.get('is_favorite')),
-            'quantity_in_lot': safe_int(item.get('quantity_in_lot')) or 1,
-            'quantity_sold': safe_int(item.get('quantity_sold')) or 0,
-            'quantity_reserved': safe_int(item.get('quantity_reserved')) or 0,
-            'system_metric': str(item.get('system_metric')) if item.get('system_metric') else None,
-            'visits': safe_int(item.get('visits')) or 0,
-            'seller_id': safe_int(item.get('seller_id')),
-            'seller_name': str(item.get('seller_name')) if item.get('seller_name') else None,
-            'seller_city': str(item.get('seller_city')) if item.get('seller_city') else None,
-            'seller_phone': seller_phone,
-            'seller_company': seller_company,
-            'commission_percent': safe_float(item.get('commission_percent')),
-            'allows_credit_card': safe_bool(item.get('allows_credit_card')),
-            'allows_credit_card_total': safe_bool(item.get('allows_credit_card_total')),
-            'transaction_limit': safe_float(item.get('transaction_limit')),
-            'max_installments': safe_int(item.get('max_installments')),
-            'end_date': safe_datetime(item.get('end_date')),
-            'end_date_time': safe_int(item.get('end_date_time')),
-            'create_at': safe_datetime(item.get('create_at')),
-            'update_at': safe_datetime(item.get('update_at')),
-            'published_at': safe_datetime(item.get('published_at')),
-            'indexation_date': safe_datetime(item.get('indexation_date')),
-            'link': str(item.get('link')) if item.get('link') else None,
-            'source': str(item.get('source', 'superbid')),
-            'metadata': metadata,
-            'is_active': True,
-            'has_bid': safe_bool(item.get('has_bid')),
-            'last_scraped_at': datetime.now().isoformat(),
+        # Judicial
+        judicial_praca = safe_int(get('auction.judicialPraca'))
+        judicial_praca_desc = safe_str(get('auction.judicialPracaDescription'))
+        judicial_control_number = safe_str(get('auction.judicialControlNumber'))
+        
+        # Store
+        store_id = safe_int(get('store.id'))
+        store_name = safe_str(get('store.name'))
+        store_highlight = safe_bool(get('store.highlight'))
+        store_logo_url = safe_str(get('store.logoUri'))
+        
+        # Manager
+        manager_id = safe_int(get('manager.id'))
+        manager_name = safe_str(get('manager.name'))
+        
+        # Valores
+        price = safe_float(get('price'))
+        price_formatted = safe_str(get('priceFormatted'))
+        initial_bid_value = safe_float(get('offerDetail.initialBidValue'))
+        current_min_bid = safe_float(get('offerDetail.currentMinBid'))
+        current_max_bid = safe_float(get('offerDetail.currentMaxBid'))
+        reserved_price = safe_float(get('offerDetail.reservedPrice'))
+        bid_increment = safe_float(get('currentBidIncrement.currentBidIncrement'))
+        
+        # Lances
+        has_bids = safe_bool(get('hasBids'))
+        has_received_bids_or_proposals = safe_bool(get('hasReceivedBidsOrProposals'))
+        total_bidders = safe_int(get('totalBidders')) or 0
+        total_bids = safe_int(get('totalBids')) or 0
+        total_received_proposals = safe_int(get('totalReceivedProposals')) or 0
+        
+        # Winner
+        current_winner_id = safe_int(get('winnerBid.userId'))
+        current_winner_login = safe_str(get('winnerBid.userLogin'))
+        
+        # Produto - Veículos (brand e model podem ser dict)
+        brand_data = get('product.brand')
+        if isinstance(brand_data, dict):
+            brand = safe_str(brand_data.get('description'))
+        else:
+            brand = safe_str(brand_data)
+        
+        model_data = get('product.model')
+        if isinstance(model_data, dict):
+            model = safe_str(model_data.get('description'))
+        else:
+            model = safe_str(model_data)
+        
+        # Extrai características do template
+        year_manufacture = None
+        year_model = None
+        plate = None
+        color = None
+        fuel = None
+        transmission = None
+        km = None
+        vehicle_restrictions = None
+        vehicle_owner = None
+        vehicle_debts = None
+        
+        template = get('product.template', {})
+        if isinstance(template, dict):
+            for group in template.get('groups', []):
+                for prop in group.get('properties', []):
+                    prop_id = str(prop.get('id', '')).lower()
+                    value = prop.get('value')
+                    
+                    if not value:
+                        continue
+                    
+                    # Mapeamento de campos
+                    if prop_id == 'anofabricacao':
+                        year_manufacture = safe_int(value)
+                    elif prop_id == 'anomodelo':
+                        year_model = safe_int(value)
+                    elif prop_id == 'placa':
+                        plate = safe_str(value)
+                    elif prop_id == 'cor':
+                        color = safe_str(value)
+                    elif prop_id == 'combustivel':
+                        fuel = safe_str(value)
+                    elif prop_id == 'cambio':
+                        transmission = safe_str(value)
+                    elif prop_id in ('km', 'quilometragem'):
+                        km = safe_int(value)
+                    elif prop_id in ('restricoes', 'restricao'):
+                        vehicle_restrictions = safe_str(value)
+                    elif prop_id in ('proprietario', 'dono'):
+                        vehicle_owner = safe_str(value)
+                    elif prop_id in ('debitos', 'dividas'):
+                        vehicle_debts = safe_str(value)
+        
+        # Product ref
+        product_your_ref = safe_str(get('product.productYourRef'))
+        
+        # Imagens
+        image_url = safe_str(get('product.thumbnailUrl'))
+        photo_count = safe_int(get('product.photoCount')) or 0
+        video_url_count = safe_int(get('product.videoUrlCount')) or 0
+        
+        # Status Offer
+        offer_status_id = safe_int(get('statusId'))
+        offer_type_id = safe_int(get('offerTypeId'))
+        status_code = safe_int(get('offerStatus.statusCode'))
+        is_removed = safe_bool(get('offerStatus.removed'))
+        is_stabbed = safe_bool(get('offerStatus.stabbed'))
+        is_subjudice = safe_bool(get('offerStatus.subjudice'))
+        is_sold = safe_bool(get('offerStatus.sold'))
+        is_reserved = safe_bool(get('offerStatus.reserved'))
+        is_closed = safe_bool(get('offerStatus.closed'))
+        is_highlight = safe_bool(get('store.highlight'))
+        is_favorite = safe_bool(get('isFavorite'))
+        
+        # Quantidades
+        quantity_in_lot = safe_int(get('quantityInLot')) or 1
+        quantity_sold = safe_int(get('quantitySold')) or 0
+        quantity_reserved = safe_int(get('quantityReserved')) or 0
+        
+        # Métricas
+        system_metric = safe_str(get('systemMetric'))
+        visits = safe_int(get('visits')) or 0
+        
+        # Seller
+        seller_id = safe_int(get('seller.id'))
+        seller_name = safe_str(get('seller.name'))
+        seller_city = safe_str(get('seller.city'))
+        
+        # Seller phone (JSONB)
+        seller_phone = get('seller.phone')
+        if not isinstance(seller_phone, (dict, list)):
+            seller_phone = None
+        
+        # Seller company (JSONB)
+        seller_company = get('seller.company')
+        if not isinstance(seller_company, dict):
+            seller_company = None
+        
+        # Commercial
+        commission_percent = safe_float(get('groupOffer.commissionPercent'))
+        allows_credit_card = safe_bool(get('commercialCondition.allowsCreditCard'))
+        allows_credit_card_total = safe_bool(get('commercialCondition.allowCreditCardTotalValue'))
+        transaction_limit = safe_float(get('commercialCondition.transactionLimit'))
+        max_installments = safe_int(get('commercialCondition.maxInstallments'))
+        
+        # Datas
+        end_date = safe_datetime(get('endDate'))
+        end_date_time = safe_int(get('endDateTime'))
+        create_at = safe_datetime(get('createAt'))
+        update_at = safe_datetime(get('updateAt'))
+        published_at = safe_datetime(get('publishedAt'))
+        indexation_date = safe_datetime(get('indexationDate'))
+        
+        # Link (obrigatório)
+        link = item.get('link')
+        if not link:
+            link = f"https://exchange.superbid.net/oferta/{offer_id}"
+        
+        # ==========================================
+        # METADATA (dados adicionais e complexos)
+        # ==========================================
+        metadata = {
+            'category_display': item.get('category_display'),
+            'scraped_at': item.get('scraped_at'),
         }
         
-        return data
-    
-    def test(self) -> bool:
-        """Testa conexão com Supabase"""
-        try:
-            url = f"{self.url}/rest/v1/"
-            r = self.session.get(url, timeout=10)
-            
-            if r.status_code == 200:
-                print("✅ Conexão com Supabase OK")
-                return True
-            else:
-                print(f"❌ Erro HTTP {r.status_code}")
-                return False
-        except Exception as e:
-            print(f"❌ Erro: {e}")
-            return False
-    
-    def get_stats(self) -> Dict:
-        """Retorna estatísticas da tabela"""
-        try:
-            url = f"{self.url}/rest/v1/{self.table}"
-            r = self.session.get(
-                url,
-                params={'select': 'count'},
-                headers={**self.headers, 'Prefer': 'count=exact'},
-                timeout=30
-            )
-            
-            if r.status_code == 200:
-                total = int(r.headers.get('Content-Range', '0').split('/')[-1])
-                return {'total': total, 'table': self.table}
-        except:
-            pass
+        # Gallery (fotos)
+        gallery = get('product.galleryJson')
+        if gallery:
+            metadata['gallery'] = gallery
         
-        return {'total': 0, 'table': self.table}
-    
-    def get_by_category(self, category: str, limit: int = 100) -> List[Dict]:
-        """Busca itens por categoria"""
-        try:
-            url = f"{self.url}/rest/v1/{self.table}"
-            params = {
-                'category': f'eq.{category}',
-                'is_active': 'eq.true',
-                'order': 'created_at.desc',
-                'limit': limit
-            }
-            
-            r = self.session.get(url, params=params, timeout=30)
-            
-            if r.status_code == 200:
-                return r.json()
-        except:
-            pass
+        # Template completo
+        if template:
+            metadata['template'] = template
         
-        return []
-    
-    def get_with_bids(self, limit: int = 100) -> List[Dict]:
-        """Busca itens com lances"""
-        try:
-            url = f"{self.url}/rest/v1/{self.table}"
-            params = {
-                'has_bids': 'eq.true',
-                'is_active': 'eq.true',
-                'order': 'total_bids.desc',
-                'limit': limit
-            }
-            
-            r = self.session.get(url, params=params, timeout=30)
-            
-            if r.status_code == 200:
-                return r.json()
-        except:
-            pass
+        # Product custom JSON
+        product_custom = get('product.productCustomJson')
+        if product_custom:
+            metadata['product_custom'] = product_custom
         
-        return []
-    
-    def get_by_store(self, store_name: str, limit: int = 100) -> List[Dict]:
-        """Busca itens por loja"""
-        try:
-            url = f"{self.url}/rest/v1/{self.table}"
-            params = {
-                'store_name': f'eq.{store_name}',
-                'is_active': 'eq.true',
-                'order': 'created_at.desc',
-                'limit': limit
-            }
-            
-            r = self.session.get(url, params=params, timeout=30)
-            
-            if r.status_code == 200:
-                return r.json()
-        except:
-            pass
+        # SubMarketplaces
+        sub_marketplaces = get('auction.subMarketplaces')
+        if sub_marketplaces:
+            metadata['sub_marketplaces'] = sub_marketplaces
         
-        return []
+        # EventPipeline
+        event_pipeline = get('auction.eventPipeline')
+        if event_pipeline:
+            metadata['event_pipeline'] = event_pipeline
+        
+        # Stores array
+        stores = get('stores')
+        if stores:
+            metadata['stores'] = stores
+        
+        # Winner bid
+        winner_bid = get('winnerBid')
+        if winner_bid:
+            metadata['winner_bid'] = winner_bid
+        
+        # ==========================================
+        # RETORNO (todos os campos do schema)
+        # ==========================================
+        return {
+            'external_id': external_id,
+            'offer_id': offer_id,
+            'product_id': product_id,
+            'lot_number': lot_number,
+            'auction_id': auction_id,
+            'group_offer_id': group_offer_id,
+            
+            'category': category,
+            'product_type_id': product_type_id,
+            'product_type_desc': product_type_desc,
+            'sub_category_id': sub_category_id,
+            'sub_category_desc': sub_category_desc,
+            
+            'title': title,
+            'description': description,
+            
+            'city': location_city,
+            'state': state,
+            'location_full': location_full,
+            'location_lat': location_lat,
+            'location_lon': location_lon,
+            
+            'auction_name': auction_name,
+            'auction_status_id': auction_status_id,
+            'auction_modality': auction_modality,
+            'auction_begin_date': auction_begin_date,
+            'auction_end_date': auction_end_date,
+            'auction_max_enddate': auction_max_enddate,
+            
+            'auctioneer_name': auctioneer_name,
+            'auctioneer_registry': auctioneer_registry,
+            'auction_address': auction_address,
+            
+            'judicial_praca': judicial_praca,
+            'judicial_praca_desc': judicial_praca_desc,
+            'judicial_control_number': judicial_control_number,
+            
+            'store_id': store_id,
+            'store_name': store_name,
+            'store_highlight': store_highlight,
+            'store_logo_url': store_logo_url,
+            
+            'manager_id': manager_id,
+            'manager_name': manager_name,
+            
+            'price': price,
+            'price_formatted': price_formatted,
+            'initial_bid_value': initial_bid_value,
+            'current_min_bid': current_min_bid,
+            'current_max_bid': current_max_bid,
+            'reserved_price': reserved_price,
+            'bid_increment': bid_increment,
+            
+            'has_bids': has_bids,
+            'has_received_bids_or_proposals': has_received_bids_or_proposals,
+            'total_bidders': total_bidders,
+            'total_bids': total_bids,
+            'total_received_proposals': total_received_proposals,
+            
+            'current_winner_id': current_winner_id,
+            'current_winner_login': current_winner_login,
+            
+            'brand': brand,
+            'model': model,
+            'year_manufacture': year_manufacture,
+            'year_model': year_model,
+            'plate': plate,
+            'color': color,
+            'fuel': fuel,
+            'transmission': transmission,
+            'km': km,
+            'vehicle_restrictions': vehicle_restrictions,
+            'vehicle_owner': vehicle_owner,
+            'vehicle_debts': vehicle_debts,
+            'product_your_ref': product_your_ref,
+            
+            'image_url': image_url,
+            'photo_count': photo_count,
+            'video_url_count': video_url_count,
+            
+            'offer_status_id': offer_status_id,
+            'offer_type_id': offer_type_id,
+            'status_code': status_code,
+            'is_removed': is_removed,
+            'is_stabbed': is_stabbed,
+            'is_subjudice': is_subjudice,
+            'is_sold': is_sold,
+            'is_reserved': is_reserved,
+            'is_closed': is_closed,
+            'is_highlight': is_highlight,
+            'is_favorite': is_favorite,
+            
+            'quantity_in_lot': quantity_in_lot,
+            'quantity_sold': quantity_sold,
+            'quantity_reserved': quantity_reserved,
+            
+            'system_metric': system_metric,
+            'visits': visits,
+            
+            'seller_id': seller_id,
+            'seller_name': seller_name,
+            'seller_city': seller_city,
+            'seller_phone': seller_phone,
+            'seller_company': seller_company,
+            
+            'commission_percent': commission_percent,
+            'allows_credit_card': allows_credit_card,
+            'allows_credit_card_total': allows_credit_card_total,
+            'transaction_limit': transaction_limit,
+            'max_installments': max_installments,
+            
+            'end_date': end_date,
+            'end_date_time': end_date_time,
+            'create_at': create_at,
+            'update_at': update_at,
+            'published_at': published_at,
+            'indexation_date': indexation_date,
+            
+            'link': link,
+            'source': 'superbid',
+            'metadata': metadata,
+            'is_active': True,
+            'has_bid': has_bids,
+            'last_scraped_at': datetime.now().isoformat(),
+        }
     
     def __del__(self):
         if hasattr(self, 'session'):
@@ -371,24 +560,6 @@ class SupabaseSuperbid:
 
 
 if __name__ == "__main__":
-    # Teste do cliente
-    print("🧪 Testando SupabaseSuperbid\n")
-    
+    print("🧪 SupabaseSuperbid Client")
     client = SupabaseSuperbid()
-    
-    if client.test():
-        stats = client.get_stats()
-        print(f"\n📊 Estatísticas:")
-        print(f"  Total de itens: {stats['total']}")
-        
-        # Exemplo de busca por categoria
-        carros = client.get_by_category('Carros', limit=5)
-        print(f"\n🚗 Primeiros carros: {len(carros)} itens")
-        
-        # Exemplo de busca com lances
-        com_lances = client.get_with_bids(limit=5)
-        print(f"💰 Com lances: {len(com_lances)} itens")
-        
-        # Exemplo de busca por loja
-        sold = client.get_by_store('SOLD', limit=5)
-        print(f"🏪 Loja SOLD: {len(sold)} itens")
+    print("✅ Cliente OK")
