@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPABASE CLIENT - SUPERBID (SCHEMA REAL)
+SUPABASE CLIENT - SUPERBID (SCHEMA REAL) + HEARTBEAT
 ✅ Mapeamento completo para schema existente
 ✅ ~100 campos + JSONBs (auction_address, seller_phone, seller_company)
 ✅ Compatível com triggers: extract_city_state_superbid, update_updated_at_column
+✅ Sistema de heartbeat integrado (infra_actions)
 """
 
 import os
 import time
 import requests
+import traceback
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 
 
 class SupabaseSuperbid:
-    """Cliente Supabase para schema real superbid_items"""
+    """Cliente Supabase para schema real superbid_items com heartbeat integrado"""
     
-    def __init__(self):
+    def __init__(self, service_name: str = 'superbid_scraper'):
         self.url = os.getenv('SUPABASE_URL')
         self.key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
         
@@ -38,6 +40,147 @@ class SupabaseSuperbid:
         
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+        
+        # ============================================
+        # HEARTBEAT - Configuração
+        # ============================================
+        self.service_name = service_name
+        self.heartbeat_enabled = True
+        self.heartbeat_start_time = time.time()
+        self.heartbeat_metrics = {
+            'items_processed': 0,
+            'categories_scraped': 0,
+            'errors': 0,
+            'warnings': 0,
+        }
+    
+    # ============================================
+    # MÉTODOS HEARTBEAT
+    # ============================================
+    
+    def _send_heartbeat(self, status: str, logs: Optional[Dict] = None, 
+                        error_message: Optional[str] = None, 
+                        metadata: Optional[Dict] = None) -> bool:
+        """Envia heartbeat para infra_actions"""
+        if not self.heartbeat_enabled:
+            return False
+        
+        try:
+            elapsed = time.time() - self.heartbeat_start_time
+            
+            full_logs = {
+                'timestamp': datetime.now().isoformat(),
+                'elapsed_seconds': round(elapsed, 2),
+                'metrics': self.heartbeat_metrics.copy(),
+                **(logs or {})
+            }
+            
+            payload = {
+                'service_name': self.service_name,
+                'service_type': 'scraper',
+                'status': status,
+                'last_activity': datetime.now().isoformat(),
+                'logs': full_logs,
+                'error_message': error_message,
+                'metadata': metadata or {}
+            }
+            
+            # ✅ FIX: Headers EXPLÍCITOS para schema PUBLIC (infra_actions)
+            heartbeat_headers = {
+                'apikey': self.key,
+                'Authorization': f'Bearer {self.key}',
+                'Content-Type': 'application/json',
+                'Content-Profile': 'public',  # ✅ Schema público
+                'Accept-Profile': 'public',    # ✅ Schema público
+                'Prefer': 'resolution=merge-duplicates,return=minimal'
+            }
+            
+            url = f"{self.url}/rest/v1/infra_actions?on_conflict=service_name"
+            r = self.session.post(url, json=[payload], headers=heartbeat_headers, timeout=30)
+            
+            return r.status_code in (200, 201)
+                
+        except Exception as e:
+            print(f"⚠️ Erro ao enviar heartbeat: {e}")
+            return False
+    
+    def heartbeat_start(self, custom_logs: Optional[Dict] = None) -> bool:
+        """Registra início da execução do scraper"""
+        logs = {
+            'event': 'start',
+            'message': 'Scraper iniciado',
+            **(custom_logs or {})
+        }
+        result = self._send_heartbeat(status='active', logs=logs)
+        if result:
+            print("💓 Heartbeat: Início registrado")
+        return result
+    
+    def heartbeat_progress(self, items_processed: int = 0, categories_scraped: int = 0,
+                          custom_logs: Optional[Dict] = None) -> bool:
+        """Atualiza progresso durante execução"""
+        self.heartbeat_metrics['items_processed'] += items_processed
+        self.heartbeat_metrics['categories_scraped'] += categories_scraped
+        
+        logs = {
+            'event': 'progress',
+            'message': f"Processados {self.heartbeat_metrics['items_processed']} itens",
+            **(custom_logs or {})
+        }
+        
+        return self._send_heartbeat(status='active', logs=logs)
+    
+    def heartbeat_success(self, final_stats: Optional[Dict] = None) -> bool:
+        """Registra conclusão com sucesso"""
+        logs = {
+            'event': 'completed',
+            'message': 'Scraper concluído com sucesso',
+            'final_stats': final_stats or {},
+        }
+        result = self._send_heartbeat(status='active', logs=logs)
+        if result:
+            print("💓 Heartbeat: Sucesso registrado")
+        return result
+    
+    def heartbeat_error(self, error: Exception, context: Optional[str] = None) -> bool:
+        """Registra erro durante execução"""
+        self.heartbeat_metrics['errors'] += 1
+        
+        error_message = f"{type(error).__name__}: {str(error)}"
+        if context:
+            error_message = f"[{context}] {error_message}"
+        
+        logs = {
+            'event': 'error',
+            'error_type': type(error).__name__,
+            'traceback': traceback.format_exc(),
+            'context': context
+        }
+        
+        result = self._send_heartbeat(
+            status='error',
+            logs=logs,
+            error_message=error_message
+        )
+        if result:
+            print("💓 Heartbeat: Erro registrado")
+        return result
+    
+    def heartbeat_warning(self, message: str, details: Optional[Dict] = None) -> bool:
+        """Registra warning"""
+        self.heartbeat_metrics['warnings'] += 1
+        
+        logs = {
+            'event': 'warning',
+            'message': message,
+            'details': details or {}
+        }
+        
+        return self._send_heartbeat(status='warning', logs=logs)
+    
+    # ============================================
+    # MÉTODOS ORIGINAIS SUPERBID
+    # ============================================
     
     def upsert(self, items: List[Dict]) -> Dict:
         """Upsert de itens na tabela"""
@@ -81,6 +224,13 @@ class SupabaseSuperbid:
                 if r.status_code in (200, 201):
                     stats['inserted'] += len(batch)
                     print(f"  ✅ Batch {batch_num}/{total_batches}: {len(batch)} itens inseridos")
+                    
+                    # ✅ HEARTBEAT: Atualiza progresso a cada batch
+                    self.heartbeat_progress(
+                        items_processed=len(batch),
+                        custom_logs={'batch': batch_num, 'total_batches': total_batches}
+                    )
+                    
                 elif r.status_code == 409:
                     stats['updated'] += len(batch)
                     print(f"  🔄 Batch {batch_num}/{total_batches}: {len(batch)} atualizados")
@@ -560,6 +710,15 @@ class SupabaseSuperbid:
 
 
 if __name__ == "__main__":
-    print("🧪 SupabaseSuperbid Client")
-    client = SupabaseSuperbid()
+    print("🧪 SupabaseSuperbid Client com Heartbeat")
+    client = SupabaseSuperbid(service_name='test_superbid')
     print("✅ Cliente OK")
+    
+    # Teste heartbeat
+    print("\n💓 Testando Heartbeat:")
+    client.heartbeat_start({'test': True})
+    time.sleep(1)
+    client.heartbeat_progress(items_processed=10, categories_scraped=1)
+    time.sleep(1)
+    client.heartbeat_success({'total': 10})
+    print("\n✅ Heartbeat funcionando!")

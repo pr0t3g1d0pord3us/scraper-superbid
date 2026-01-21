@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPERBID SCRAPER - OTIMIZADO PARA ML
+SUPERBID SCRAPER - OTIMIZADO PARA ML + HEARTBEAT
 ✅ Passive listening completo
 ✅ 18 categorias principais
 ✅ Upload automático para Supabase
+✅ Sistema de heartbeat integrado (infra_actions)
 """
 
 import sys
 import json
 import time
+import os
 import requests
 from pathlib import Path
 from datetime import datetime
@@ -248,10 +250,32 @@ def main():
     start_time = time.time()
     
     # ========================================
+    # INICIALIZAÇÃO HEARTBEAT
+    # ========================================
+    supabase = None
+    try:
+        if not os.getenv('SUPABASE_URL') or not os.getenv('SUPABASE_SERVICE_ROLE_KEY'):
+            print("\n⚠️ Variáveis SUPABASE não configuradas - heartbeat desabilitado")
+        else:
+            supabase = SupabaseSuperbid(service_name='superbid_scraper')
+            
+            # ✅ HEARTBEAT: Registra início
+            supabase.heartbeat_start({'categories': 18})
+    except Exception as e:
+        print(f"\n⚠️ Erro ao inicializar heartbeat: {e}")
+    
+    # ========================================
     # ETAPA 1: SCRAPING
     # ========================================
     scraper = SuperbidScraper()
-    items = scraper.scrape()
+    
+    try:
+        items = scraper.scrape()
+    except Exception as e:
+        # ✅ HEARTBEAT: Registra erro fatal
+        if supabase:
+            supabase.heartbeat_error(e, context="scrape_main")
+        raise
     
     if not items:
         print("\n⚠️  Nenhum item coletado")
@@ -271,8 +295,14 @@ def main():
     print("="*80)
     
     try:
-        client = SupabaseSuperbid()
-        stats = client.upsert(items)
+        if not supabase:
+            if not os.getenv('SUPABASE_URL') or not os.getenv('SUPABASE_SERVICE_ROLE_KEY'):
+                print("\n⚠️ Variáveis SUPABASE não configuradas - pulando upload")
+                return 1
+            else:
+                supabase = SupabaseSuperbid(service_name='superbid_scraper')
+        
+        stats = supabase.upsert(items)
         
         print("\n" + "="*80)
         print("📊 RESULTADO DO UPLOAD")
@@ -285,6 +315,11 @@ def main():
     except Exception as e:
         print(f"\n❌ Erro no upload Supabase: {str(e)}")
         print("⚠️  Dados foram salvos localmente em:", json_file)
+        
+        # ✅ HEARTBEAT: Registra erro no insert
+        if supabase:
+            supabase.heartbeat_error(e, context="supabase_insert")
+        
         return 1
     
     # ========================================
@@ -296,6 +331,17 @@ def main():
     
     print(f"\n⏱️  Duração: {minutes}min {seconds}s")
     print(f"✅ Concluído: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # ✅ HEARTBEAT: Registra sucesso com estatísticas finais
+    if supabase:
+        supabase.heartbeat_success(final_stats={
+            'total_items': len(items),
+            'categories_scraped': len(scraper.categories),
+            'with_bids': scraper.stats['with_bids'],
+            'by_category': scraper.stats['by_category'],
+            'duration_seconds': round(elapsed, 2)
+        })
+    
     print("="*80 + "\n")
     
     return 0
