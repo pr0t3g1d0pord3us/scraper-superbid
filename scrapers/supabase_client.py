@@ -586,7 +586,7 @@ class SupabaseSuperbid:
             'group_offer_id': group_offer_id,
             
             'category': category,
-            'refined_category': safe_str(item.get('refined_category', 'Outros')),  # categoria refinada (10 categorias)
+            'categoria': safe_str(item.get('categoria', 'Outros')),  # ✅ categoria refinada (10 categorias)
             'product_type_id': product_type_id,
             'product_type_desc': product_type_desc,
             'sub_category_id': sub_category_id,
