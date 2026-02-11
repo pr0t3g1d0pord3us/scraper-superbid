@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SUPERBID SCRAPER - OTIMIZADO PARA ML + HEARTBEAT
+SUPERBID SCRAPER - OTIMIZADO PARA ML + HEARTBEAT + CATEGORIAS NORMALIZADAS
 ✅ Passive listening completo
 ✅ 18 categorias principais
 ✅ Upload automático para Supabase
 ✅ Sistema de heartbeat integrado (infra_actions)
+✅ 10 categorias normalizadas
 """
 
 import sys
@@ -54,31 +55,69 @@ class SuperbidScraper:
             ('tecnologia', 'Tecnologia'),
         ]
         
-        # Mapeamento direto: categorias Superbid → 10 categorias refinadas
+        # ========================================
+        # MAPEAMENTO COMPLETO: 19 CATEGORIAS → 10 CATEGORIAS NORMALIZADAS
+        # ========================================
         self.category_mapping = {
+            # 1️⃣ IMÓVEIS
             'Imóveis': 'Imóveis',
+            
+            # 2️⃣ VEÍCULOS (Carro, moto, caminhão, ônibus, embarcação)
+            'Carros & Motos': 'Veículos',
             'Carros e Motos': 'Veículos',
+            'Caminhões & Ônibus': 'Veículos',
             'Caminhões e Ônibus': 'Veículos',
+            'Embarcações & Aeronaves': 'Veículos',
             'Embarcações e Aeronaves': 'Veículos',
+            
+            # 3️⃣ MÁQUINAS & EQUIPAMENTOS (Agrícola, Industrial, Pesada, Movimentação)
+            'Máquinas Pesadas & Agrícolas': 'Máquinas & Equipamentos',
             'Máquinas Pesadas e Agrícolas': 'Máquinas & Equipamentos',
+            'Industrial, Máquinas & Equipamentos': 'Máquinas & Equipamentos',
             'Industrial, Máquinas e Equipamentos': 'Máquinas & Equipamentos',
+            'Movimentação & Transporte': 'Máquinas & Equipamentos',
             'Movimentação e Transporte': 'Máquinas & Equipamentos',
+            
+            # 4️⃣ TECNOLOGIA (Eletrônicos, Informática, Celulares, Tech, Eletroportáteis)
             'Tecnologia': 'Tecnologia',
+            
+            # 5️⃣ CASA & CONSUMO (Móveis, Decoração, Eletrodomésticos, Utilidades domésticas)
             'Eletrodomésticos': 'Casa & Consumo',
             'Móveis e Decoração': 'Casa & Consumo',
+            'Móveis & Decoração': 'Casa & Consumo',
             'Alimentos e Bebidas': 'Casa & Consumo',
+            'Alimentos & Bebidas': 'Casa & Consumo',
+            
+            # 6️⃣ INDUSTRIAL & EMPRESARIAL (Equipamentos comerciais, Cozinhas industriais, Estoques, Partes & peças)
             'Cozinhas e Restaurantes': 'Industrial & Empresarial',
+            'Cozinhas & Restaurantes': 'Industrial & Empresarial',
             'Partes e Peças': 'Industrial & Empresarial',
+            'Partes e Peças ': 'Industrial & Empresarial',  # com espaço no final
+            'Partes & Peças': 'Industrial & Empresarial',
+            'Spare Parts': 'Industrial & Empresarial',
+            'Spare Parts ': 'Industrial & Empresarial',  # com espaço no final
+            
+            # 7️⃣ MATERIAIS & SUCATAS (Resíduo, lote, material bruto)
+            'Sucatas, Materiais & Resíduos': 'Materiais & Sucatas',
+            'Sucatas , Materiais & Resíduos': 'Materiais & Sucatas',  # com espaço antes da vírgula
             'Sucatas, Materiais e Resíduos': 'Materiais & Sucatas',
             'Materiais para Construção Civil': 'Materiais & Sucatas',
+            
+            # 8️⃣ ANIMAIS
             'Animais': 'Animais',
+            
+            # 9️⃣ ARTE & COLECIONÁVEIS (Arte, Relógios, Bolsas, Joias, Canetas, Colecionáveis)
             'Bolsas, Canetas, Joias e Relógios': 'Arte & Colecionáveis',
+            'Bolsas, Canetas, Joias & Relógios': 'Arte & Colecionáveis',
+            
+            # 🔟 OUTROS
             'Oportunidades': 'Outros',
         }
         
         self.stats = {
             'total_scraped': 0,
             'by_category': {},
+            'by_categoria': {},  # estatísticas por categoria refinada (10 categorias)
             'duplicates': 0,
             'with_bids': 0,
             'errors': 0,
@@ -97,9 +136,28 @@ class SuperbidScraper:
     
     def _categorize_item(self, original_category: str) -> str:
         """
-        Mapeia categoria original do Superbid para uma das 10 categorias refinadas
+        Mapeia categoria original do Superbid para uma das 10 categorias refinadas.
+        Trata variações com & vs e, espaços extras, etc.
         """
-        return self.category_mapping.get(original_category, 'Outros')
+        # Remove espaços extras no início e fim
+        original_category = original_category.strip()
+        
+        # Busca no mapeamento
+        refined = self.category_mapping.get(original_category)
+        
+        if refined:
+            return refined
+        
+        # Se não encontrou exato, tenta normalizar (& vs e)
+        normalized = original_category.replace(' e ', ' & ')
+        refined = self.category_mapping.get(normalized)
+        
+        if refined:
+            return refined
+        
+        # Fallback: retorna "Outros"
+        print(f"   ⚠️  Categoria não mapeada: '{original_category}'")
+        return 'Outros'
     
     def scrape(self) -> List[Dict]:
         """Scrape completo de todas as categorias"""
@@ -108,6 +166,7 @@ class SuperbidScraper:
         print("="*80)
         print(f"📦 Categorias: {len(self.categories)}")
         print("🎯 Foco: Campos essenciais para análise e oportunidades")
+        print("🏷️  Normalização: 10 categorias refinadas")
         print("="*80 + "\n")
         
         all_items = []
@@ -123,6 +182,12 @@ class SuperbidScraper:
             
             all_items.extend(category_items)
             self.stats['by_category'][display_name] = len(category_items)
+            
+            # Conta por categoria refinada
+            for item in category_items:
+                categoria = item.get('categoria', 'Outros')
+                self.stats['by_categoria'][categoria] = \
+                    self.stats['by_categoria'].get(categoria, 0) + 1
             
             print(f"   ✅ {len(category_items)} itens coletados")
             
@@ -214,16 +279,19 @@ class SuperbidScraper:
         return items
     
     def _parse_offer(self, offer: Dict, category_display: str) -> Optional[Dict]:
-        """Parse - preserva raw_data completo"""
+        """Parse - preserva raw_data completo e mapeia categoria"""
         try:
             offer_id = offer.get('id')
             if not offer_id:
                 return None
             
+            # Pega product_type_desc do raw_data (pode ser diferente do category_display)
+            product_type = offer.get('productTypeDesc', category_display)
+            
             return {
                 'external_id': f"superbid_{offer_id}",
-                'category': category_display,  # categoria original do Superbid
-                'refined_category': self._categorize_item(category_display),  # categoria refinada (10 categorias)
+                'product_type_desc': product_type,  # categoria original do Superbid
+                'categoria': self._categorize_item(product_type),  # categoria refinada (10 categorias)
                 'scraped_at': datetime.now().isoformat(),
                 'raw_data': offer,  # TODOS os dados da API
                 'offer_id': offer_id,
@@ -255,9 +323,13 @@ class SuperbidScraper:
         print("📊 ESTATÍSTICAS FINAIS")
         print("="*80)
         
-        print(f"\n📦 Por Categoria:")
+        print(f"\n📦 Por Categoria Original:")
         for category, count in sorted(self.stats['by_category'].items()):
             print(f"   • {category:<45} {count:>5} itens")
+        
+        print(f"\n🏷️  Por Categoria Normalizada (10 categorias):")
+        for category, count in sorted(self.stats['by_categoria'].items()):
+            print(f"   • {category:<30} {count:>5} itens")
         
         print(f"\n📈 Resumo:")
         print(f"   • Total: {self.stats['total_scraped']}")
@@ -271,7 +343,7 @@ class SuperbidScraper:
 def main():
     """Execução principal - Scrape + Upload"""
     print("\n" + "="*80)
-    print("🚀 SUPERBID - SCRAPER + UPLOAD")
+    print("🚀 SUPERBID - SCRAPER + UPLOAD (COM CATEGORIAS NORMALIZADAS)")
     print("="*80)
     print(f"📅 Início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*80)
@@ -368,6 +440,7 @@ def main():
             'categories_scraped': len(scraper.categories),
             'with_bids': scraper.stats['with_bids'],
             'by_category': scraper.stats['by_category'],
+            'by_categoria': scraper.stats['by_categoria'],
             'duration_seconds': round(elapsed, 2)
         })
     
