@@ -54,6 +54,28 @@ class SuperbidScraper:
             ('tecnologia', 'Tecnologia'),
         ]
         
+        # Mapeamento direto: categorias Superbid → 10 categorias refinadas
+        self.category_mapping = {
+            'Imóveis': 'Imóveis',
+            'Carros e Motos': 'Veículos',
+            'Caminhões e Ônibus': 'Veículos',
+            'Embarcações e Aeronaves': 'Veículos',
+            'Máquinas Pesadas e Agrícolas': 'Máquinas & Equipamentos',
+            'Industrial, Máquinas e Equipamentos': 'Máquinas & Equipamentos',
+            'Movimentação e Transporte': 'Máquinas & Equipamentos',
+            'Tecnologia': 'Tecnologia',
+            'Eletrodomésticos': 'Casa & Consumo',
+            'Móveis e Decoração': 'Casa & Consumo',
+            'Alimentos e Bebidas': 'Casa & Consumo',
+            'Cozinhas e Restaurantes': 'Industrial & Empresarial',
+            'Partes e Peças': 'Industrial & Empresarial',
+            'Sucatas, Materiais e Resíduos': 'Materiais & Sucatas',
+            'Materiais para Construção Civil': 'Materiais & Sucatas',
+            'Animais': 'Animais',
+            'Bolsas, Canetas, Joias e Relógios': 'Arte & Colecionáveis',
+            'Oportunidades': 'Outros',
+        }
+        
         self.stats = {
             'total_scraped': 0,
             'by_category': {},
@@ -72,6 +94,12 @@ class SuperbidScraper:
         
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+    
+    def _categorize_item(self, original_category: str) -> str:
+        """
+        Mapeia categoria original do Superbid para uma das 10 categorias refinadas
+        """
+        return self.category_mapping.get(original_category, 'Outros')
     
     def scrape(self) -> List[Dict]:
         """Scrape completo de todas as categorias"""
@@ -194,7 +222,8 @@ class SuperbidScraper:
             
             return {
                 'external_id': f"superbid_{offer_id}",
-                'category_display': category_display,
+                'category': category_display,  # categoria original do Superbid
+                'refined_category': self._categorize_item(category_display),  # categoria refinada (10 categorias)
                 'scraped_at': datetime.now().isoformat(),
                 'raw_data': offer,  # TODOS os dados da API
                 'offer_id': offer_id,
